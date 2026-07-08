@@ -1,0 +1,26 @@
+{
+  "name": "zotero-agent",
+  "version": "0.1.0",
+  "description": "Zotero AI Research Assistant — AI-assisted analysis of papers, annotations, highlights, tags and notes inside Zotero 9.",
+  "private": true,
+  "type": "module",
+  "config": {
+    "addonName": "Zotero AI Research Assistant",
+    "addonID": "zotero-agent@davidvfischer.github.io",
+    "prefsPrefix": "extensions.zotero-agent"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/build.mjs --watch",
+    "pack": "node scripts/build.mjs --pack",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0",
+    "zotero-types": "^4.0.0"
+  }
+}

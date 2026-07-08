@@ -1,0 +1,14 @@
+{
+  "manifest_version": 2,
+  "name": "Zotero AI Research Assistant",
+  "version": "0.0.0",
+  "description": "AI-assisted analysis of papers, annotations, highlights, tags and notes inside Zotero.",
+  "author": "David Fischer",
+  "applications": {
+    "zotero": {
+      "id": "zotero-agent@davidvfischer.github.io",
+      "strict_min_version": "9.0",
+      "strict_max_version": "9.0.*"
+    }
+  }
+}
