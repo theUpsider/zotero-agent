@@ -207,7 +207,7 @@ Hinweise:
 - `applications.zotero.id` ist die eindeutige Plugin-ID.
 - Die ID muss stabil bleiben, sonst erkennt Zotero Updates nicht sauber.
 - `strict_max_version` bewusst eng halten und nach Tests erhöhen.
-- `update_url` nur setzen, wenn du wirklich ein Update-Manifest bereitstellst.
+- **Korrektur (verifiziert an Zotero-Quellcode, `app/scripts/fetch_xulrunner`):** `applications.zotero.update_url` und `strict_max_version` sind in Release-Builds von Zotero **Pflichtfelder**. Fehlt eines davon, schlägt die Installation mit der generischen Meldung „could not be installed … may be incompatible" fehl. Die URL muss beim Installieren nicht erreichbar sein. Beta-/Dev-Builds überspringen den `strict_max_version`-Check (`strictCompatibility = false`).
 
 ### 3.3 `bootstrap.js`
 

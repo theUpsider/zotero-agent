@@ -7,6 +7,7 @@
   "applications": {
     "zotero": {
       "id": "zotero-agent@davidvfischer.github.io",
+      "update_url": "https://github.com/davidvfischer/zotero-agent/releases/download/release/update.json",
       "strict_min_version": "9.0",
       "strict_max_version": "9.0.*"
     }
