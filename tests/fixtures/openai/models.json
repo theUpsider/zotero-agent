@@ -1,0 +1,8 @@
+{
+  "object": "list",
+  "data": [
+    { "id": "llama3", "object": "model", "owned_by": "library" },
+    { "id": "mistral", "object": "model", "owned_by": "library" },
+    { "id": "gpt-4o-mini", "object": "model", "owned_by": "openai" }
+  ]
+}

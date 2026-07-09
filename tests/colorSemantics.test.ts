@@ -33,6 +33,14 @@ describe("serialize/parse round-trip", () => {
     expect(restored).toEqual(mapping);
   });
 
+  it("preserves multiple categories per color with custom labels (FR-028, BR-005)", () => {
+    const mapping = defaultColorSemantics();
+    mapping[ZOTERO_ANNOTATION_COLORS.yellow] = ["methodology", "sampling strategy"];
+    mapping[ZOTERO_ANNOTATION_COLORS.red] = ["limitations", "threats to validity", "bias"];
+    const restored = parseColorSemantics(serializeColorSemantics(mapping));
+    expect(restored).toEqual(mapping);
+  });
+
   it("falls back to defaults for empty input", () => {
     expect(parseColorSemantics("")).toEqual(defaultColorSemantics());
   });

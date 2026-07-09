@@ -24,3 +24,7 @@ export function removeFromWindow(window: _ZoteroTypes.MainWindow): void {
 export function removeFromAllWindows(): void {
   plugin.removeFromAllWindows();
 }
+
+export function shutdown(): void {
+  plugin.shutdown();
+}

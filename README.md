@@ -6,9 +6,12 @@ Build guide: [`docs/research/zotero-9-extension-build-guide.md`](docs/research/z
 
 ## Status
 
-Bootstrapped skeleton. Runnable plugin (menu entry, selected-item access, debug logging),
-module layout, and unit-test setup are in place. Architecture planning is the next step;
-providers, retrieval, and workflows are interface stubs.
+Sprint 1 complete: settings pane (provider + highlight-color meanings), working
+OpenAI-compatible provider (OpenAI, Ollama, LM Studio, vLLM) with "Test connection"
+validation, secure credential storage, and typed error/status plumbing.
+Retrieval and workflows are still interface stubs (Sprints 2–3).
+Sprint plan: [`docs/sprints/`](docs/sprints/) · manual test scripts:
+[`docs/sprints/smoke-tests.md`](docs/sprints/smoke-tests.md)
 
 ## Prerequisites
 
@@ -46,6 +49,32 @@ Option B — load from source (dev, hot rebuild via `npm start`):
 4. Start Zotero (`zotero -purgecaches -ZoteroDebugText` for debug output). After code changes, restart Zotero.
 
 Smoke test: Tools menu → *AI Research Assistant: Analyze selected items* shows the count of selected items.
+Full manual test scripts: [`docs/sprints/smoke-tests.md`](docs/sprints/smoke-tests.md).
+
+## Configuration
+
+Open Edit → Settings → *AI Research Assistant*. Configuration is stored in Zotero
+preferences (decision OP-006); the single source of key names and defaults is
+`PREF_KEYS`/`PREF_DEFAULTS` in `src/core/config.ts`:
+
+| Pref (under `extensions.zotero-agent.`) | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Master switch |
+| `provider.active` | `openai-compatible` | Active AI provider id |
+| `provider.openaiCompatible.endpoint` | `""` | Base URL, e.g. `http://localhost:11434/v1` |
+| `provider.openaiCompatible.model` | `""` | Model id, e.g. `llama3` |
+| `provider.requestTimeoutMs` | `30000` | HTTP timeout for provider calls |
+| `colorSemantics` | `""` | JSON color→category mapping (empty = defaults) |
+
+### Credential storage
+
+The API key is **not** kept in preferences when avoidable. On startup the plugin
+probes Zotero's login manager (secure password storage); if available, keys are
+stored there. If the login manager is unavailable, the key falls back to a
+plaintext preference (`extensions.zotero-agent.credentialFallback.*`) — the
+settings pane shows which mechanism is active under the key field. Keys never
+appear in logs, error messages, or the UI; all provider error paths run through
+a redaction helper (NFR-012).
 
 ## Project structure
 
@@ -54,16 +83,19 @@ addon/            static plugin files copied into the build
   manifest.json   Zotero 9 manifest (version stamped from package.json)
   bootstrap.js    lifecycle hooks; loads the bundle
   prefs.js        default preferences
+  content/        preferences pane (xhtml/js/css) — runs in the settings window
 src/
   index.ts        bundle entry — exposes the ZoteroAgent global for bootstrap.js
-  plugin.ts       window/UI integration (menu entry, cleanup)
-  core/           config (pref access) + color-category semantics (pure, tested)
+  plugin.ts       glue: dependency wiring, settings API, pref-pane registration
+  core/           config, color semantics, typed errors/redaction, credentials (pure, tested)
   prompts/        predefined scholarly prompt templates (pure, tested)
-  providers/      AI provider abstraction + OpenAI-compatible stub
+  providers/      AI provider abstraction, registry, OpenAI-compatible provider (pure, tested)
   retrieval/      local index/RAG backend interface (stub)
-  workflows/      workflow orchestration contracts (stub)
-  zotero/         Zotero API adapter — only module touching the Zotero global
-tests/            vitest unit tests for the pure modules
+  workflows/      provider gate (ensureProviderReady/testConnection) + workflow contracts
+  ui/             settings API published to the preferences pane
+  zotero/         Zotero adapter, login-manager credentials, fetch resolver —
+                  the only modules touching Zotero/Mozilla globals
+tests/            vitest unit tests for the pure modules (fixtures, no live HTTP)
 scripts/build.mjs esbuild bundle + static copy + .xpi packaging
 docs/             requirements and research documents
 ```

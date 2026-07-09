@@ -1,0 +1,93 @@
+/* Preferences pane styling (S1-06, S1-07). */
+
+#zotero-agent-prefs .za-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+#zotero-agent-prefs .za-row > label,
+#zotero-agent-prefs .za-row > html|label {
+  min-width: 110px;
+}
+
+#zotero-agent-prefs .za-wide {
+  flex: 1;
+  min-width: 320px;
+}
+
+#zotero-agent-prefs .za-hint {
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  font-size: 0.92em;
+  margin: 2px 0 8px;
+}
+
+#zotero-agent-prefs .za-status {
+  font-size: 0.95em;
+}
+
+#zotero-agent-prefs .za-ok {
+  color: #2e7d32;
+}
+
+#zotero-agent-prefs .za-error {
+  color: #b00020;
+}
+
+/* Color semantics rows */
+
+#zotero-agent-prefs .za-color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+#zotero-agent-prefs .za-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  flex: none;
+}
+
+#zotero-agent-prefs .za-color-name {
+  min-width: 70px;
+  text-transform: capitalize;
+}
+
+#zotero-agent-prefs .za-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1;
+}
+
+#zotero-agent-prefs .za-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  background: rgba(127, 127, 127, 0.12);
+  font-size: 0.92em;
+}
+
+#zotero-agent-prefs .za-chip-remove {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 1em;
+  line-height: 1;
+}
+
+#zotero-agent-prefs .za-chip-edit {
+  width: 110px;
+}
+
+#zotero-agent-prefs .za-add-input {
+  width: 130px;
+}

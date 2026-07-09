@@ -30,6 +30,7 @@ function shutdown(data, reason) {
   log("shutting down");
   if (ZoteroAgent) {
     ZoteroAgent.removeFromAllWindows();
+    ZoteroAgent.shutdown();
     ZoteroAgent = undefined;
   }
 }

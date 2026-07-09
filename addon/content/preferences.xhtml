@@ -1,0 +1,57 @@
+<vbox id="zotero-agent-prefs"
+      xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+      xmlns:html="http://www.w3.org/1999/xhtml">
+
+  <groupbox>
+    <label><html:h2>AI Provider</html:h2></label>
+    <html:p class="za-hint">Connect the assistant to an AI service. This works with OpenAI and
+      with local services such as Ollama or LM Studio.</html:p>
+
+    <html:div class="za-row">
+      <html:label for="za-provider">Provider</html:label>
+      <menulist id="za-provider" preference="extensions.zotero-agent.provider.active" native="true">
+        <menupopup id="za-provider-popup"/>
+      </menulist>
+    </html:div>
+
+    <html:div class="za-row">
+      <html:label for="za-endpoint">Endpoint URL</html:label>
+      <html:input id="za-endpoint" type="text" class="za-wide"
+        preference="extensions.zotero-agent.provider.openaiCompatible.endpoint"
+        placeholder="e.g. http://localhost:11434/v1 or https://api.openai.com/v1"/>
+    </html:div>
+
+    <html:div class="za-row">
+      <html:label for="za-model">Model</html:label>
+      <html:input id="za-model" type="text" class="za-wide"
+        preference="extensions.zotero-agent.provider.openaiCompatible.model"
+        placeholder="e.g. gpt-4o-mini or llama3"/>
+    </html:div>
+
+    <html:div class="za-row">
+      <html:label for="za-apikey">API key</html:label>
+      <html:input id="za-apikey" type="password" class="za-wide"
+        placeholder="Leave empty for local services"/>
+      <button id="za-apikey-clear" label="Remove key"/>
+    </html:div>
+    <html:p id="za-key-storage-note" class="za-hint"></html:p>
+
+    <html:div class="za-row">
+      <button id="za-test-connection" label="Test connection"/>
+      <html:span id="za-test-result" class="za-status"></html:span>
+    </html:div>
+  </groupbox>
+
+  <groupbox id="za-colors-groupbox">
+    <label><html:h2>Highlight colors</html:h2></label>
+    <html:p class="za-hint">Tell the assistant what each highlight color means in your notes.
+      A color can stand for more than one meaning.</html:p>
+    <html:div id="za-color-rows"></html:div>
+    <html:div class="za-row">
+      <button id="za-colors-reset" label="Reset to defaults"/>
+    </html:div>
+  </groupbox>
+
+  <html:p id="za-not-ready" class="za-error" hidden="hidden">The plugin is still starting up.
+    Close this window and try again in a moment.</html:p>
+</vbox>
