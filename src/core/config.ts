@@ -1,5 +1,6 @@
-/** Preference access. Thin wrapper around Zotero.Prefs so business logic
- * never touches the Zotero global directly (keeps modules unit-testable).
+/** Preference key names, defaults, and the PrefStore seam. The live store
+ * backed by Zotero.Prefs lives in src/zotero/prefs.ts so this module never
+ * touches the Zotero global (keeps modules unit-testable).
  *
  * OP-006 decided: plugin configuration is stored in Zotero prefs under
  * PREFS_PREFIX. This file is the single source of truth for key names and
@@ -19,6 +20,9 @@ export const PREF_KEYS = {
   openaiApiKeyFallback: `${PREFS_PREFIX}.credentialFallback.provider.openaiCompatible.apiKey`,
   colorSemantics: `${PREFS_PREFIX}.colorSemantics`,
   requestTimeoutMs: `${PREFS_PREFIX}.provider.requestTimeoutMs`,
+  /** Per-item character budget for PDF full text in composed prompts; interim
+   * cap until retrieval lands in Sprint 3 (S2-03). */
+  contextCharBudget: `${PREFS_PREFIX}.context.charBudgetPerItem`,
 } as const;
 
 /** Typed defaults for every key; invalid stored values fall back to these. */
@@ -30,21 +34,13 @@ export const PREF_DEFAULTS: Record<string, string | number | boolean> = {
   [PREF_KEYS.openaiApiKeyFallback]: "",
   [PREF_KEYS.colorSemantics]: "",
   [PREF_KEYS.requestTimeoutMs]: 30000,
+  [PREF_KEYS.contextCharBudget]: 20000,
 };
 
 export interface PrefStore {
   get(key: string): unknown;
   set(key: string, value: string | number | boolean): void;
   clear(key: string): void;
-}
-
-/** Live store backed by Zotero.Prefs; injected as default at plugin init. */
-export function zoteroPrefStore(): PrefStore {
-  return {
-    get: (key) => Zotero.Prefs.get(key, true),
-    set: (key, value) => Zotero.Prefs.set(key, value, true),
-    clear: (key) => Zotero.Prefs.clear(key, true),
-  };
 }
 
 export function getStringPref(store: PrefStore, key: string, fallback = ""): string {

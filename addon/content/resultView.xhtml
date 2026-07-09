@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<?xml-stylesheet href="resultView.css" type="text/css"?>
+<window id="zotero-agent-result-window"
+        title="AI Research Assistant"
+        xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+        xmlns:html="http://www.w3.org/1999/xhtml">
+
+  <html:div id="za-view">
+
+    <html:p id="za-not-ready" class="za-error" hidden="hidden">The plugin is still starting up.
+      Close this window and try again in a moment.</html:p>
+
+    <html:div id="za-header">
+      <html:span id="za-run-title"></html:span>
+      <html:span id="za-item-list" class="za-hint"></html:span>
+    </html:div>
+
+    <html:div id="za-prompt-pane" hidden="hidden">
+      <html:textarea id="za-prompt-input" rows="3"
+        placeholder="Ask anything about the selected papers…"></html:textarea>
+      <html:div class="za-row">
+        <html:button id="za-prompt-run">Run</html:button>
+        <html:span id="za-prompt-error" class="za-error"></html:span>
+      </html:div>
+    </html:div>
+
+    <html:div id="za-status-row">
+      <html:span id="za-status"></html:span>
+      <html:progress id="za-progress" max="100" hidden="hidden"></html:progress>
+      <html:button id="za-cancel" hidden="hidden">Cancel</html:button>
+    </html:div>
+
+    <html:div id="za-truncation-note" class="za-banner" hidden="hidden"></html:div>
+    <html:div id="za-error" class="za-error-block" hidden="hidden"></html:div>
+
+    <html:div id="za-results"></html:div>
+
+    <html:div id="za-actions" class="za-row">
+      <html:button id="za-save" disabled="disabled">Save as note</html:button>
+      <html:button id="za-copy" disabled="disabled">Copy</html:button>
+      <html:button id="za-rerun" disabled="disabled">Re-run</html:button>
+      <html:span id="za-save-result" class="za-hint"></html:span>
+    </html:div>
+
+  </html:div>
+
+  <script src="resultView.js"/>
+</window>

@@ -1,6 +1,8 @@
 /** Workflow orchestration contracts (FG-003..FG-012). Workflows are always
  * user-initiated (BR-001); only local index updates may run in the background
- * (BR-002). Concrete workflows arrive with the architecture milestone. */
+ * (BR-002). */
+
+import type { ItemRef } from "../zotero/types";
 
 export type WorkflowId =
   | "analyze-papers"
@@ -8,6 +10,7 @@ export type WorkflowId =
   | "generate-notes"
   | "summarize-notes"
   | "suggest-tags"
+  | "prompt-template"
   | "free-prompt";
 
 export interface WorkflowContext {
@@ -21,10 +24,24 @@ export interface WorkflowProgress {
   fraction?: number;
 }
 
+/** One per-item slice of a workflow result (FR-036, FR-055). */
+export interface WorkflowResultSection {
+  ref: ItemRef;
+  title: string;
+  /** Generated markdown for this item; rendered in the view and converted to
+   * HTML when saved as a note. */
+  markdown: string;
+  /** True when the item's PDF text was cut to the context budget (S2-03). */
+  truncated: boolean;
+}
+
 export interface WorkflowResult {
   workflowId: WorkflowId;
-  /** Markdown/HTML result for the result view, savable as a Zotero note (FR-092). */
+  /** Full markdown result for the result view, savable as Zotero notes (FR-092). */
   content: string;
+  sections: WorkflowResultSection[];
+  /** Human-readable notice when any item's context was truncated (S2-03). */
+  truncationNotice?: string;
 }
 
 export interface Workflow {

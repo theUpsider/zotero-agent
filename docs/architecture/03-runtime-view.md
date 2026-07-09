@@ -35,10 +35,16 @@ sequenceDiagram
         P-->>O: CompletionResult
         O->>V: WorkflowResult (markdown, per-item sections)
         U->>V: "Save as note"
-        V->>A: createChildNote(itemKey, html)
-        A-->>V: note key → confirmation
+        V->>O: saveResultAsNotes()
+        O->>A: createChildNote(itemKey, html)
+        A-->>O: note key
+        O-->>V: outcome → confirmation
     end
 ```
+
+Note: the view never calls the adapter directly — saving goes through the
+orchestrator (`saveResultAsNotes()`), per the component view's dependency
+matrix (ui/ → zotero/ is forbidden).
 
 ## 2. Scenario: paper analysis with retrieval (Sprints 3–4)
 

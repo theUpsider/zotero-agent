@@ -1,0 +1,96 @@
+#za-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  height: 100vh;
+  box-sizing: border-box;
+  font: message-box;
+}
+
+#za-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+#za-run-title {
+  font-size: 1.2em;
+  font-weight: 600;
+}
+
+.za-hint {
+  color: color-mix(in srgb, currentColor 60%, transparent);
+}
+
+#za-item-list {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#za-prompt-pane textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+}
+
+.za-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#za-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 1.6em;
+}
+
+#za-progress {
+  flex: 1;
+}
+
+.za-banner {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, orange 20%, transparent);
+}
+
+.za-error {
+  color: #c0392b;
+}
+
+.za-error-block {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, #c0392b 15%, transparent);
+}
+
+#za-results {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 4px;
+  padding: 8px 12px;
+}
+
+.za-section + .za-section {
+  margin-top: 12px;
+  border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  padding-top: 8px;
+}
+
+.za-section h2 {
+  margin: 0 0 4px;
+  font-size: 1.05em;
+}
+
+.za-section-body pre {
+  overflow-x: auto;
+  padding: 6px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  border-radius: 4px;
+}

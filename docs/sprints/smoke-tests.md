@@ -66,3 +66,74 @@ no jargon, no API key fragments.
 2. Save an API key and run Test connection (success and failure cases).
 3. `grep <key> /tmp/zotero.log`. **Expected:** no match; log lines are
    prefixed `[zotero-agent]`.
+
+## Sprint 2 — workflows, result view, notes
+
+### 7. Adapter read layer (S2-01, EIR-001, EIR-002, DAR-001)
+
+1. Pick a library item that has an annotated PDF (highlights in ≥2 colors,
+   at least one with a comment), tags, and a child note.
+2. Right-click the item → AI Research Assistant → "Summarize results".
+   **Expected:** the result view opens, progress shows "Reading items…", and
+   the run completes; the debug log shows no adapter errors.
+3. Repeat with an item that has *no* PDF and *no* annotations.
+   **Expected:** the workflow still completes (metadata-only context) — no
+   error about missing attachments (empty collections, not failures).
+
+### 8. Demo script — template end-to-end (sprint DoD; FR-035, FR-036, FR-091…FR-098)
+
+1. Configure a reachable provider (Ollama or OpenAI); Test connection green.
+2. Select **two** papers → right-click → AI Research Assistant → "Summarize
+   results". **Expected:** result view opens, live progress (status text +
+   progress bar) updates per item (FR-094, NFR-003/006).
+3. **Expected result rendering:** one section per paper with its title as a
+   heading; content rendered structured (headings/lists — not a raw text
+   blob, NFR-018); annotation category grouping visible in output where the
+   model used it (FR-095).
+4. Click "Save as note". **Expected:** "2 notes saved."; each paper now has a
+   child note with the generated content (FR-055, FR-097, EIR-004).
+5. Open one of the notes in Zotero and edit it. **Expected:** a plain,
+   normally editable Zotero note — no plugin-proprietary markup (FR-056).
+6. The view stays open; run another template from the same window via
+   "Re-run". **Expected:** works without reopening (FR-098).
+
+### 9. Free-form prompt (S2-04; FR-081, FR-089, NFR-015)
+
+1. Select 1–2 papers → context menu → "Free prompt…". **Expected:** result
+   view opens with a prompt input pane.
+2. Click "Run" with an empty prompt. **Expected:** inline message "Enter a
+   prompt first." — no workflow starts.
+3. Enter a real question and run. **Expected:** single combined answer over
+   all selected papers; "Save as note" attaches the answer to each paper.
+
+### 10. Cancellation (S2-02; NFR-023)
+
+1. Start a template workflow on several items against a slow model.
+2. Click "Cancel" after the first item completes. **Expected:** status
+   "Cancelled.", no further provider calls (watch debug log), the finished
+   section stays visible, **no notes were written**, and the view remains
+   usable for a re-run.
+
+### 11. Truncation honesty (S2-03)
+
+1. Set `extensions.zotero-agent.context.charBudgetPerItem` to a small value
+   (e.g. 2000) via the config editor, pick an item with a long PDF, run any
+   template. **Expected:** an orange banner in the result view naming the
+   truncated item; the composed context (debug) contains the explicit
+   truncation marker line.
+
+### 12. Error mapping in the view (EIR-014, NFR-023)
+
+1. Point the endpoint at a dead host, run a template. **Expected:** the view
+   shows "Could not reach the AI service. …" — plain language, no stack
+   trace, no API key fragments; no notes were written.
+2. Restore the endpoint, re-run from the same window. **Expected:** works.
+
+### 13. Menu entry points (S2-07; FR-035, FR-036, NFR-014)
+
+1. Right-click with **no** item selected (e.g. on empty space / a note-only
+   selection). **Expected:** the "AI Research Assistant" submenu is disabled.
+2. The submenu appears in both the item context menu and the Tools menu,
+   listing all 7 templates plus "Free prompt…".
+3. Disable and re-enable the plugin. **Expected:** no duplicate or orphaned
+   menu entries; the result window (if open) was closed on disable.

@@ -19,3 +19,6 @@ pref("extensions.zotero-agent.provider.requestTimeoutMs", 30000);
 
 // JSON-serialized color-to-category mapping; empty means built-in defaults.
 pref("extensions.zotero-agent.colorSemantics", "");
+
+// Per-item character budget for PDF full text in composed prompts (S2-03).
+pref("extensions.zotero-agent.context.charBudgetPerItem", 20000);
