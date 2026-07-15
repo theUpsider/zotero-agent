@@ -9,9 +9,10 @@
  * never writes to Zotero (NFR-023 groundwork). */
 
 import { parseColorSemantics } from "../core/colorSemantics";
-import { getIntPref, getStringPref, PREF_DEFAULTS, PREF_KEYS, type PrefStore } from "../core/config";
+import { getBoolPref, getIntPref, getStringPref, PREF_DEFAULTS, PREF_KEYS, type PrefStore } from "../core/config";
 import { AgentError, toUserMessage, type ErrorCode, type Logger } from "../core/errors";
 import { markdownToHtml } from "../core/markdown";
+import { approxTokens } from "../core/tokens";
 import {
   composeFreePrompt,
   composeItemContexts,
@@ -20,7 +21,8 @@ import {
 } from "../prompts/composer";
 import { getTemplate, PROMPT_TEMPLATES, type PromptTemplate } from "../prompts/templates";
 import type { AIProvider } from "../providers/types";
-import type { ItemContextReader, ItemRef, NoteWriter } from "../zotero/types";
+import type { RetrievalBackend, RetrievalResult } from "../retrieval/types";
+import type { ItemContext, ItemContextReader, ItemRef, NoteWriter } from "../zotero/types";
 import type { WorkflowId, WorkflowResult, WorkflowResultSection } from "./types";
 
 export type WorkflowRunRequest =
@@ -40,6 +42,16 @@ export interface SaveNotesOutcome {
   failed: { itemKey: string; message: string }[];
 }
 
+/** Optional retrieval integration (S3-05). Absent entirely = Sprint 2
+ * behavior (char-budget truncation only, no retrieval passages) — orchestrator
+ * tests that don't set this up keep working unchanged. */
+export interface OrchestratorRetrievalDeps {
+  backend: RetrievalBackend;
+  /** Queue items for background (re)indexing; called for items whose PDF
+   * text is over budget but not yet indexed, so the *next* run benefits. */
+  enqueueReindex?: (refs: ItemRef[]) => void;
+}
+
 export interface OrchestratorDeps {
   /** S1-05 gate; plugin glue passes () => ensureProviderReady(gateDeps). */
   ensureProvider: () => Promise<AIProvider>;
@@ -47,6 +59,7 @@ export interface OrchestratorDeps {
   noteWriter: NoteWriter;
   prefs: PrefStore;
   logger: Logger;
+  retrieval?: OrchestratorRetrievalDeps;
 }
 
 export interface WorkflowOrchestrator {
@@ -73,9 +86,61 @@ function truncationNotice(composed: ComposedContext): string | undefined {
   if (composed.truncations.length === 0) return undefined;
   const keys = composed.truncations.map((t) => t.itemKey).join(", ");
   return (
-    `Full text was truncated to the context budget for: ${keys}. ` +
-    "The result is based on partial text (retrieval-based context arrives in a later version)."
+    `These items are not indexed yet, so the result is based on truncated text: ${keys}. ` +
+    "The index is being updated in the background."
   );
+}
+
+/** Queries the retrieval backend for items whose PDF text exceeds the token
+ * budget, one query per over-budget item so passage allocation stays fair
+ * across a multi-item selection (S3-05). Items with no PDF text, or that
+ * fit the budget, are skipped entirely — retrieval never degrades small
+ * PDFs (NFR-004: full text is sent whenever it already fits). Unindexed
+ * over-budget items are queued for background indexing so the *next* run
+ * benefits; the composer's existing char-budget fallback covers this run. */
+async function retrieveContext(
+  contexts: ItemContext[],
+  queryText: string,
+  tokenBudgetPerItem: number,
+  passagesPerItem: number,
+  retrieval: OrchestratorRetrievalDeps,
+  logger: Logger,
+): Promise<Map<string, RetrievalResult[]>> {
+  const retrievedByItem = new Map<string, RetrievalResult[]>();
+  const overBudget = contexts.filter(
+    (c) => c.pdfText && approxTokens(c.pdfText) > tokenBudgetPerItem,
+  );
+  if (overBudget.length === 0) return retrievedByItem;
+
+  let indexedKeys: Set<string>;
+  try {
+    indexedKeys = new Set(await retrieval.backend.listIndexedItemKeys());
+  } catch (error) {
+    logger.error("listIndexedItemKeys failed; skipping retrieval for this run", error);
+    return retrievedByItem;
+  }
+
+  const notIndexed: ItemRef[] = [];
+  for (const context of overBudget) {
+    const key = context.metadata.key;
+    if (!indexedKeys.has(key)) {
+      notIndexed.push(context.ref);
+      continue;
+    }
+    try {
+      const results = await retrieval.backend.query({
+        text: queryText,
+        itemKeys: [key],
+        limit: passagesPerItem,
+        mode: "hybrid",
+      });
+      if (results.length > 0) retrievedByItem.set(key, results);
+    } catch (error) {
+      logger.error(`retrieval query failed for item ${key}`, error);
+    }
+  }
+  if (notIndexed.length > 0) retrieval.enqueueReindex?.(notIndexed);
+  return retrievedByItem;
 }
 
 export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrchestrator {
@@ -193,6 +258,32 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         emit({ type: "failed", code: "invalid-config", message: "The selected items no longer exist." });
         return;
       }
+      const tokenBudgetPerItem = getIntPref(
+        deps.prefs,
+        PREF_KEYS.contextTokenBudget,
+        PREF_DEFAULTS[PREF_KEYS.contextTokenBudget] as number,
+      );
+      let retrievedByItem: Map<string, RetrievalResult[]> | undefined;
+      if (deps.retrieval && getBoolPref(deps.prefs, PREF_KEYS.retrievalEnabled, true)) {
+        const queryText =
+          request.kind === "template"
+            ? (template as PromptTemplate).retrievalHint ?? (template as PromptTemplate).label
+            : request.prompt;
+        const passagesPerItem = getIntPref(
+          deps.prefs,
+          PREF_KEYS.retrievalPassagesPerItem,
+          PREF_DEFAULTS[PREF_KEYS.retrievalPassagesPerItem] as number,
+        );
+        retrievedByItem = await retrieveContext(
+          contexts,
+          queryText,
+          tokenBudgetPerItem,
+          passagesPerItem,
+          deps.retrieval,
+          deps.logger,
+        );
+      }
+
       const composed = composeItemContexts(
         contexts,
         parseColorSemantics(getStringPref(deps.prefs, PREF_KEYS.colorSemantics)),
@@ -202,6 +293,8 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
             PREF_KEYS.contextCharBudget,
             PREF_DEFAULTS[PREF_KEYS.contextCharBudget] as number,
           ),
+          tokenBudgetPerItem,
+          ...(retrievedByItem ? { retrievedByItem } : {}),
         },
       );
 

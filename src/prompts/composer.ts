@@ -1,33 +1,54 @@
-/** Prompt composer (S2-03): builds the {{context}} block from adapter output
- * — metadata header, annotations grouped by color category (FR-034), notes,
- * tags, and PDF text under an explicit per-item character budget (interim
- * until retrieval lands in Sprint 3). Pure module; imports only plain types
- * from the adapter. Output is deterministic for identical input. */
+/** Prompt composer (S2-03, extended S3-05): builds the {{context}} block from
+ * adapter output — metadata header, annotations grouped by color category
+ * (FR-034), notes, tags, and PDF text. When an item's PDF text exceeds the
+ * token budget, retrieved passages replace it (S3-05); the character-budget
+ * truncation from S2-03 remains the fallback for items the index hasn't
+ * covered yet. Pure module; imports only plain types from the adapter and
+ * retrieval/ (never a concrete backend). Output is deterministic for
+ * identical input. */
 
 import type { ColorSemantics } from "../core/colorSemantics";
 import { categoriesForColor } from "../core/colorSemantics";
+import { stripHtml, truncateAtBoundary } from "../core/text";
+import { approxTokens, tokenBudgetToChars } from "../core/tokens";
+import type { RetrievalResult } from "../retrieval/types";
 import type { AnnotationInfo, ItemContext, ItemRef } from "../zotero/types";
 import type { PromptTemplate } from "./templates";
 import { renderTemplate } from "./templates";
 
+// Re-exported for existing test/import compatibility; canonical impl in core/text.ts.
+export { truncateAtBoundary };
+
 export interface ComposeOptions {
-  /** Max characters of PDF full text included per item. */
+  /** Max characters of PDF full text included per item (S2-03 fallback cap;
+   * still applies when the item isn't indexed yet, see contextSource below). */
   pdfTextCharBudgetPerItem: number;
+  /** Soft token budget for an item's PDF-text section (S3-05, NFR-004). When
+   * set and exceeded, retrieved passages replace full text if available. */
+  tokenBudgetPerItem?: number;
+  /** Retrieved passages keyed by item key, used when an item's PDF text
+   * exceeds tokenBudgetPerItem. An item absent from this map is treated as
+   * "not indexed yet" and falls back to char-budget truncation. */
+  retrievedByItem?: Map<string, RetrievalResult[]>;
 }
 
 /** Records that an item's PDF text was cut (surfaced in the result view —
- * "interim honesty" per S2-03). */
+ * "interim honesty" per S2-03; now only reached when the item isn't indexed). */
 export interface TruncationNote {
   itemKey: string;
   includedChars: number;
   totalChars: number;
 }
 
+/** How an item's PDF-text section was produced (S3-05). */
+export type ContextSource = "retrieval" | "full-text" | "truncated-full-text" | "no-pdf";
+
 export interface ComposedItemContext {
   ref: ItemRef;
   title: string;
   contextText: string;
   truncation?: TruncationNote;
+  contextSource: ContextSource;
 }
 
 export interface ComposedContext {
@@ -38,31 +59,6 @@ export interface ComposedContext {
 }
 
 const UNCATEGORIZED = "Uncategorized";
-
-/** Cut text at the budget, backing off to the previous paragraph or word
- * boundary so the cut is deterministic and never mid-word. */
-export function truncateAtBoundary(text: string, budget: number): string {
-  if (text.length <= budget) return text;
-  const slice = text.slice(0, budget);
-  const paragraphBreak = slice.lastIndexOf("\n\n");
-  if (paragraphBreak > budget * 0.5) return slice.slice(0, paragraphBreak);
-  const wordBreak = slice.search(/\s\S*$/);
-  return wordBreak > 0 ? slice.slice(0, wordBreak) : slice;
-}
-
-function stripHtml(html: string): string {
-  return html
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/[ \t]+/g, " ")
-    .replace(/\s*\n\s*/g, "\n")
-    .trim();
-}
 
 function groupAnnotationsByCategory(
   annotations: AnnotationInfo[],
@@ -135,21 +131,47 @@ function composeItem(
   }
 
   let truncation: TruncationNote | undefined;
+  let contextSource: ContextSource = "no-pdf";
   if (item.pdfText) {
-    let pdfText = item.pdfText;
-    if (pdfText.length > options.pdfTextCharBudgetPerItem) {
-      pdfText = truncateAtBoundary(pdfText, options.pdfTextCharBudgetPerItem);
-      truncation = {
-        itemKey: m.key,
-        includedChars: pdfText.length,
-        totalChars: item.pdfText.length,
-      };
-    }
-    lines.push("", "Full text:", pdfText);
-    if (truncation) {
-      lines.push(
-        `[Note: full text truncated to ${truncation.includedChars} of ${truncation.totalChars} characters]`,
-      );
+    const overCharBudget = item.pdfText.length > options.pdfTextCharBudgetPerItem;
+    const overTokenBudget =
+      options.tokenBudgetPerItem !== undefined && approxTokens(item.pdfText) > options.tokenBudgetPerItem;
+
+    if (!overCharBudget && !overTokenBudget) {
+      lines.push("", "Full text:", item.pdfText);
+      contextSource = "full-text";
+    } else {
+      const passages = options.retrievedByItem?.get(m.key);
+      if (options.tokenBudgetPerItem !== undefined && passages && passages.length > 0) {
+        lines.push("", "Relevant passages (retrieved for this question):");
+        const budgetChars = tokenBudgetToChars(options.tokenBudgetPerItem);
+        let used = 0;
+        for (const { chunk } of passages) {
+          const label = chunk.page ? `[p. ${chunk.page}]` : "[passage]";
+          const line = `${label} "${chunk.text}"`;
+          if (used > 0 && used + line.length > budgetChars) break;
+          lines.push(line);
+          used += line.length;
+        }
+        contextSource = "retrieval";
+      } else {
+        let pdfText = item.pdfText;
+        if (overCharBudget) {
+          pdfText = truncateAtBoundary(pdfText, options.pdfTextCharBudgetPerItem);
+          truncation = {
+            itemKey: m.key,
+            includedChars: pdfText.length,
+            totalChars: item.pdfText.length,
+          };
+        }
+        lines.push("", "Full text:", pdfText);
+        if (truncation) {
+          lines.push(
+            `[Note: full text truncated to ${truncation.includedChars} of ${truncation.totalChars} characters]`,
+          );
+        }
+        contextSource = truncation ? "truncated-full-text" : "full-text";
+      }
     }
   }
 
@@ -157,6 +179,7 @@ function composeItem(
     ref: item.ref,
     title: m.title,
     contextText: lines.join("\n"),
+    contextSource,
   };
   if (truncation) composed.truncation = truncation;
   return composed;

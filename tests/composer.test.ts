@@ -118,6 +118,53 @@ describe("composeItemContexts", () => {
   });
 });
 
+describe("composeItemContexts — retrieval-augmented context (S3-05)", () => {
+  const RETRIEVAL_OPTIONS = { pdfTextCharBudgetPerItem: 20000, tokenBudgetPerItem: 5 };
+
+  it("uses retrieved passages instead of truncating when the item is indexed", () => {
+    const pdfText = "word ".repeat(2000);
+    const item = itemContext({ pdfText, pdfTextSource: "pdf-worker" });
+    const retrievedByItem = new Map([
+      [
+        "KEY1",
+        [
+          {
+            chunk: { itemKey: "KEY1", source: "pdf-text" as const, text: "the key finding", chunkId: "KEY1:pdf-text:0", page: "4" },
+            score: 0.9,
+          },
+        ],
+      ],
+    ]);
+    const result = composeItemContexts([item], MAPPING, { ...RETRIEVAL_OPTIONS, retrievedByItem });
+    expect(result.truncations).toHaveLength(0);
+    expect(result.items[0]!.contextSource).toBe("retrieval");
+    expect(result.combinedText).toContain("Relevant passages (retrieved for this question):");
+    expect(result.combinedText).toContain('[p. 4] "the key finding"');
+    expect(result.combinedText).not.toContain("truncated");
+  });
+
+  it("falls back to char-budget truncation with a notice when the item isn't indexed", () => {
+    const pdfText = "word ".repeat(2000);
+    const item = itemContext({ pdfText, pdfTextSource: "pdf-worker" });
+    const result = composeItemContexts([item], MAPPING, { pdfTextCharBudgetPerItem: 100, tokenBudgetPerItem: 5 });
+    expect(result.truncations).toHaveLength(1);
+    expect(result.items[0]!.contextSource).toBe("truncated-full-text");
+  });
+
+  it("sends the full text (no retrieval, no truncation) when it already fits the token budget", () => {
+    const item = itemContext({ pdfText: "short text", pdfTextSource: "pdf-worker" });
+    const result = composeItemContexts([item], MAPPING, { pdfTextCharBudgetPerItem: 20000, tokenBudgetPerItem: 5000 });
+    expect(result.items[0]!.contextSource).toBe("full-text");
+    expect(result.truncations).toHaveLength(0);
+  });
+
+  it("marks items with no PDF text as contextSource 'no-pdf'", () => {
+    const item = itemContext({ pdfText: "" });
+    const result = composeItemContexts([item], MAPPING, OPTIONS);
+    expect(result.items[0]!.contextSource).toBe("no-pdf");
+  });
+});
+
 describe("composeTemplatePrompt", () => {
   it("renders every predefined template with real context", () => {
     const { combinedText } = composeItemContexts([itemContext()], MAPPING, OPTIONS);

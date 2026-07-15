@@ -82,6 +82,28 @@ describe("buildChatCompletionRequest", () => {
     );
     expect((withoutKey.init.headers as Record<string, string>).Authorization).toBeUndefined();
   });
+
+  // S3-03 AC: "no code path sends embeddings or index files to any provider" —
+  // asserted structurally here (the request builder can only ever produce a
+  // chat-completion body) in addition to the retrieval/ ↛ providers/ import
+  // rule enforced by scripts/check-isolation.mjs.
+  it("never targets an embeddings endpoint and only ever carries chat-completion fields", () => {
+    const { url, init } = buildChatCompletionRequest(settings, {
+      messages: [{ role: "user", content: "hi" }],
+      maxTokens: 5,
+      temperature: 0.2,
+    });
+    expect(url).not.toMatch(/embed/i);
+    expect(url).toMatch(/\/chat\/completions$/);
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    const allowedKeys = new Set(["model", "messages", "stream", "max_tokens", "temperature"]);
+    for (const key of Object.keys(body)) {
+      expect(allowedKeys.has(key)).toBe(true);
+    }
+    expect(body).not.toHaveProperty("input");
+    expect(body).not.toHaveProperty("embedding");
+    expect(body).not.toHaveProperty("vector");
+  });
 });
 
 describe("response parsing", () => {

@@ -35,6 +35,11 @@
   color: #b00020;
 }
 
+#zotero-agent-prefs #za-index-progress {
+  width: 100%;
+  margin: 4px 0 8px;
+}
+
 /* Color semantics rows */
 
 #zotero-agent-prefs .za-color-row {

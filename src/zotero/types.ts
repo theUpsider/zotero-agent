@@ -58,3 +58,27 @@ export interface ItemContextReader {
 export interface NoteWriter {
   createChildNote(ref: ItemRef, html: string): Promise<{ noteKey: string }>;
 }
+
+/** Plugin-data-directory file access, injected into retrieval/ so the index
+ * can persist without retrieval/ touching the Zotero global directly (S3-01,
+ * DAR-003/004). Names are flat filenames within the plugin's own subdirectory
+ * — the implementation (src/zotero/files.ts) owns path resolution. Writes
+ * must be atomic (crash-safe). This is a types-only seam: retrieval/ may
+ * import it from here, never from zotero/files.ts. */
+export interface FileStore {
+  readText(name: string): Promise<string | null>;
+  writeText(name: string, text: string): Promise<void>;
+  readBytes(name: string): Promise<Uint8Array | null>;
+  writeBytes(name: string, bytes: Uint8Array): Promise<void>;
+  remove(name: string): Promise<void>;
+}
+
+/** Notifier event surface (S3-06): plain, serializable — the Zotero
+ * Notifier's item/attachment/annotation/note/tag events all resolve down to
+ * a change on a top-level regular item before crossing this seam. */
+export type ItemChangeEvent =
+  | { kind: "changed"; ref: ItemRef }
+  | { kind: "removed"; ref: ItemRef }
+  /** Notifier gave no resolvable item identity (e.g. some delete payloads);
+   * the index manager reconciles by re-listing all items. */
+  | { kind: "sweep" };

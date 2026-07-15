@@ -233,6 +233,80 @@
     });
   }
 
+  /* ---------- Local index section (S3-08) ---------- */
+
+  function formatIndexState(s) {
+    switch (s.state) {
+      case "rebuilding":
+        return s.progress
+          ? `Rebuilding — ${s.progress.done} of ${s.progress.total}`
+          : "Rebuilding…";
+      case "indexing":
+        return "Updating…";
+      case "needs-rebuild":
+        return "Needs rebuild";
+      default:
+        return "Up to date";
+    }
+  }
+
+  function initIndexSection() {
+    const coverage = $("za-index-coverage");
+    const updated = $("za-index-updated");
+    const progress = $("za-index-progress");
+    const rebuildButton = $("za-index-rebuild");
+    const cancelButton = $("za-index-cancel");
+    const status = $("za-index-status");
+    if (!coverage || !api.indexStatus) return;
+
+    function refresh() {
+      const s = api.indexStatus();
+      if (!s) {
+        coverage.textContent = "The local index is unavailable.";
+        updated.textContent = "";
+        status.textContent = "";
+        rebuildButton.disabled = true;
+        return;
+      }
+      coverage.textContent =
+        s.totalItems != null
+          ? `${s.indexedItems} of ${s.totalItems} items indexed`
+          : `${s.indexedItems} items indexed`;
+      updated.textContent = s.lastUpdated
+        ? `Last updated: ${new Date(s.lastUpdated).toLocaleString()}`
+        : "Not built yet.";
+      status.textContent = formatIndexState(s);
+      status.className = s.state === "needs-rebuild" ? "za-status za-error" : "za-status";
+
+      const rebuilding = s.state === "rebuilding";
+      progress.hidden = !rebuilding;
+      cancelButton.hidden = !rebuilding;
+      if (rebuilding && s.progress && s.progress.total > 0) {
+        progress.max = s.progress.total;
+        progress.value = s.progress.done;
+      }
+      rebuildButton.disabled = rebuilding;
+      rebuildButton.setAttribute(
+        "label",
+        s.state === "needs-rebuild" ? "Rebuild index (needed)" : "Rebuild index",
+      );
+    }
+
+    rebuildButton.addEventListener("command", () => {
+      api.rebuildIndex();
+      refresh();
+    });
+    cancelButton.addEventListener("command", () => {
+      api.cancelIndexRebuild();
+      refresh();
+    });
+
+    refresh();
+    const interval = setInterval(refresh, 1000);
+    window.addEventListener("unload", () => clearInterval(interval));
+  }
+
   initProviderSection();
   initColorSection();
+  initIndexSection();
 })();

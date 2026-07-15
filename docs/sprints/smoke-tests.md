@@ -137,3 +137,69 @@ no jargon, no API key fragments.
    listing all 7 templates plus "Free prompt…".
 3. Disable and re-enable the plugin. **Expected:** no duplicate or orphaned
    menu entries; the result window (if open) was closed on disable.
+
+## Sprint 3 — local index & retrieval
+
+### 14. Day-1 runtime probe (S3-03 gate)
+
+1. Set `extensions.zotero-agent.devTools` to `true` in the config editor,
+   restart. Tools → Developer → Run JavaScript:
+   `await Zotero.ZoteroAgent.dev.probeRetrieval()` (see `src/retrieval/probe.ts`;
+   dev hook wiring is part of this sprint's plugin.ts changes).
+2. **Expected:** a `ProbeReport` object. `oramaOk: true` always (pure JS).
+   Record `wasmOk`/`embedOk`/`dim`/`elapsedMs` — this is the evidence that
+   decides whether `extensions.zotero-agent.retrieval.embeddings` can default
+   to `true` in a future sprint. If `wasmOk: false`, note the `error` field
+   and confirm retrieval still works keyword-only (test 16).
+
+### 15. Automatic index updates (S3-06; FR-075, NFR-005, FR-077, NFR-008)
+
+1. With the plugin running, edit or add a highlight/annotation on a PDF, or
+   add a tag to an item. **Expected:** within a few seconds the debug log
+   shows `[index]`-prefixed lines for that item — no user action beyond the
+   edit itself (FR-075).
+2. Import or add ≥50 items in one batch. **Expected:** Zotero's UI stays
+   responsive throughout (no beachball/freeze) — indexing runs deferred and
+   throttled (NFR-005).
+3. Watch the debug log during steps 1–2. **Expected:** zero HTTP/provider
+   log lines during indexing — only `[index]` activity, never a provider
+   call, unless a workflow was explicitly run at the same time (FR-076,
+   FR-077, NFR-008).
+
+### 16. Retrieval-augmented large-PDF prompt (S3-05; FR-090, NFR-004)
+
+1. Add a 100+ page PDF to an item, let it index (check the settings pane —
+   test 18), then run a free-form prompt on that item.
+2. **Expected:** the result does **not** show the S2-03 truncation notice;
+   the debug log / composed context shows a "Relevant passages" section
+   instead of the full text.
+3. Immediately add the *same* PDF as a **new**, not-yet-indexed item and
+   repeat. **Expected:** the old truncation-style fallback notice appears
+   ("not indexed yet … based on truncated text"), and the item is enqueued
+   for indexing (repeat after a few seconds — notice should then disappear).
+4. This works identically whether `retrieval.embeddings` is on or off — with
+   it off, retrieval runs keyword-only (BM25), which is enough to avoid
+   blind truncation.
+
+### 17. Rebuild & consistency (S3-07; FR-078, FR-079, BR-009, BR-010)
+
+1. Quit Zotero. Delete the `zotero-agent/` folder inside the Zotero data
+   directory (`Zotero.DataDirectory.dir`, shown in Zotero's Advanced
+   settings). Restart.
+2. **Expected:** the plugin starts normally (empty index, no error dialog);
+   a large-PDF prompt falls back to truncation until re-indexed.
+3. Open settings → "Local index" → "Rebuild index". **Expected:** progress
+   bar advances, "Rebuilding — X of Y" updates, and on completion coverage
+   shows all items indexed again with no data loss (everything regenerated
+   from Zotero — BR-009/BR-010).
+4. Click "Rebuild index" again and immediately "Cancel". **Expected:** the
+   manager returns to "Up to date"/idle state without hanging.
+
+### 18. Index status UI (S3-08; NFR-006, NFR-013)
+
+1. Open settings → "Local index". **Expected:** plain-language coverage
+   ("X of Y items indexed"), "Last updated" time, Rebuild button — no
+   mention of "embeddings" or "vectors" anywhere in the pane.
+2. Trigger a rebuild (test 17) and watch the pane while it runs.
+   **Expected:** progress bar and "Rebuilding — done of total" text update
+   roughly once a second without reopening the pane.

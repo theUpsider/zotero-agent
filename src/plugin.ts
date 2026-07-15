@@ -5,22 +5,33 @@
  * APIs for plugin windows, registers the pref pane (S1-06), and adds the
  * workflow menus (S2-07). */
 
-import { createLogger, type Logger } from "./core/errors";
+import { parseColorSemantics } from "./core/colorSemantics";
+import { getBoolPref, getStringPref, PREF_KEYS } from "./core/config";
 import type { CredentialStore } from "./core/credentials";
 import { CREDENTIAL_IDS } from "./core/credentials";
+import { createLogger, type Logger } from "./core/errors";
 import { createDefaultRegistry } from "./providers/registry";
-import { ensureProviderReady, type ProviderGateDeps } from "./workflows/providerGate";
-import { createWorkflowOrchestrator, listTemplateWorkflows } from "./workflows/orchestrator";
+import { createTransformersEmbedder } from "./retrieval/embeddings";
+import { createIndexManager, type IndexManager } from "./retrieval/indexManager";
+import { createOramaBackend } from "./retrieval/oramaBackend";
+import { defaultReranker } from "./retrieval/rerank";
 import { createSettingsApi, type SettingsApi } from "./ui/settingsApi";
 import { createWorkflowUiApi, type WorkflowUiApi } from "./ui/workflowApi";
 import {
   createItemContextReader,
   createNoteWriter,
   getSelectedItemRefs,
+  listAllItemRefs,
 } from "./zotero/adapter";
 import { createZoteroCredentialStore } from "./zotero/credentials";
+import { createPluginFileStore } from "./zotero/files";
 import { resolveFetch } from "./zotero/http";
+import { createModelCache } from "./zotero/modelCache";
+import { registerItemChangeObserver } from "./zotero/notifier";
 import { zoteroPrefStore } from "./zotero/prefs";
+import { createWorkflowOrchestrator, listTemplateWorkflows } from "./workflows/orchestrator";
+import { ensureProviderReady, type ProviderGateDeps } from "./workflows/providerGate";
+import { runRetrievalProbe, type ProbeReport } from "./retrieval/probe";
 
 interface PluginInfo {
   id: string;
@@ -28,12 +39,19 @@ interface PluginInfo {
   rootURI: string;
 }
 
+/** Dev-only surface (S3-03): `Zotero.ZoteroAgent.dev.probeRetrieval()`, run
+ * once from the Run-JavaScript console to check wasm/embedding viability in
+ * a live profile. Gated by the `devTools` pref — never on by default. */
+interface DevApi {
+  probeRetrieval(): Promise<ProbeReport>;
+}
+
 const TOOLS_MENU_ID = "zotero-agent-tools-menu";
 const ITEM_MENU_ID = "zotero-agent-item-menu";
 const RESULT_WINDOW_NAME = "zotero-agent-result-view";
 const MENU_LABEL = "AI Research Assistant";
 
-type ZoteroAgentGlobal = { settings: SettingsApi; workflows: WorkflowUiApi };
+type ZoteroAgentGlobal = { settings: SettingsApi; workflows: WorkflowUiApi; dev?: DevApi };
 
 export class ZoteroAgentPlugin {
   private info: PluginInfo | null = null;
@@ -45,6 +63,12 @@ export class ZoteroAgentPlugin {
   private windowCleanups = new Map<Window, (() => void)[]>();
   /** Cached secret list for log redaction; refreshed on credential changes. */
   private knownSecrets: string[] = [];
+  /** Local retrieval index (S3-06); null when retrieval init failed —
+   * workflows and settings fall back to Sprint 2 behavior (char truncation
+   * only, no index status section). */
+  private indexManager: IndexManager | null = null;
+  private notifierUnregister: (() => void) | null = null;
+  private retrievalBackend: ReturnType<typeof createOramaBackend> | null = null;
 
   init(info: PluginInfo): void {
     this.info = info;
@@ -75,19 +99,40 @@ export class ZoteroAgentPlugin {
       logger,
     };
 
-    const settings = createSettingsApi(deps);
+    const reader = createItemContextReader(logger);
+    const indexManager = await this.initRetrieval(prefs, logger, reader);
+
+    const settings = createSettingsApi(deps, indexManager ?? undefined);
     const orchestrator = createWorkflowOrchestrator({
       ensureProvider: () => ensureProviderReady(deps),
-      reader: createItemContextReader(logger),
+      reader,
       noteWriter: createNoteWriter(logger),
       prefs,
       logger,
+      ...(indexManager
+        ? {
+            retrieval: {
+              backend: this.retrievalBackend!,
+              enqueueReindex: (refs: { libraryID: number; key: string }[]) => {
+                for (const ref of refs) indexManager.onItemEvent({ kind: "changed", ref });
+              },
+            },
+          }
+        : {}),
     });
     this.workflows = createWorkflowUiApi(orchestrator);
-    (Zotero as unknown as { ZoteroAgent?: ZoteroAgentGlobal }).ZoteroAgent = {
-      settings,
-      workflows: this.workflows,
-    };
+    const global: ZoteroAgentGlobal = { settings, workflows: this.workflows };
+    if (getBoolPref(prefs, PREF_KEYS.devTools, false) && this.info) {
+      const rootURI = this.info.rootURI;
+      global.dev = {
+        probeRetrieval: () =>
+          runRetrievalProbe({
+            wasmPaths: `${rootURI}content/ort/`,
+            customCache: createModelCache(createPluginFileStore(logger), logger),
+          }),
+      };
+    }
+    (Zotero as unknown as { ZoteroAgent?: ZoteroAgentGlobal }).ZoteroAgent = global;
 
     this.prefPaneId = await Zotero.PreferencePanes.register({
       pluginID: this.info.id,
@@ -97,6 +142,55 @@ export class ZoteroAgentPlugin {
       label: MENU_LABEL,
     });
     this.log("preferences pane registered");
+  }
+
+  /** Builds the local retrieval index (S3-01/S3-06): plugin-data-dir file
+   * store -> optional local embedder (behind the `retrieval.embeddings` pref,
+   * default off until the day-1 wasm probe is confirmed, see
+   * src/retrieval/probe.ts) -> Orama backend -> index manager -> notifier
+   * subscription. Never throws into Zotero — a failure anywhere here logs
+   * and leaves retrieval null, and the rest of the plugin runs exactly as in
+   * Sprint 2 (char-budget truncation only, no index status section). */
+  private async initRetrieval(
+    prefs: ReturnType<typeof zoteroPrefStore>,
+    logger: Logger,
+    reader: ReturnType<typeof createItemContextReader>,
+  ): Promise<IndexManager | null> {
+    if (!this.info) return null;
+    if (!getBoolPref(prefs, PREF_KEYS.retrievalEnabled, true)) return null;
+
+    try {
+      const fileStore = createPluginFileStore(logger);
+      let embedder = null;
+      if (getBoolPref(prefs, PREF_KEYS.retrievalEmbeddings, false)) {
+        embedder = await createTransformersEmbedder({
+          wasmPaths: `${this.info.rootURI}content/ort/`,
+          customCache: createModelCache(fileStore, logger),
+          onWarning: (message) => logger.log(`[index] ${message}`),
+        });
+      }
+      const backend = createOramaBackend({ fileStore, embedder, rerank: defaultReranker, logger });
+      this.retrievalBackend = backend;
+
+      const indexManager = createIndexManager({
+        backend,
+        reader,
+        listAllItems: () => listAllItemRefs(logger),
+        chunkOptions: () => ({ colorSemantics: parseColorSemantics(getStringPref(prefs, PREF_KEYS.colorSemantics)) }),
+        logger,
+      });
+      void indexManager.load();
+      this.notifierUnregister = registerItemChangeObserver(
+        (event) => indexManager.onItemEvent(event),
+        logger,
+      );
+      this.indexManager = indexManager;
+      this.log("[index] retrieval initialized");
+      return indexManager;
+    } catch (error) {
+      logger.error("retrieval initialization failed; falling back to Sprint 2 behavior", error);
+      return null;
+    }
   }
 
   /** Keep the redaction list current when the key changes via settings. */
@@ -130,6 +224,13 @@ export class ZoteroAgentPlugin {
       this.resultWindow.close();
     }
     this.resultWindow = null;
+    if (this.notifierUnregister) {
+      this.notifierUnregister();
+      this.notifierUnregister = null;
+    }
+    this.indexManager?.dispose();
+    this.indexManager = null;
+    this.retrievalBackend = null;
     delete (Zotero as unknown as { ZoteroAgent?: unknown }).ZoteroAgent;
     this.log("shut down");
   }

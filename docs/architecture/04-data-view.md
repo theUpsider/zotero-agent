@@ -31,8 +31,10 @@ classDiagram
         +string itemKey
         +source: pdf-text|annotation|note|tag|metadata
         +string text
-        +number page
+        +string chunkId
+        +string page
         +string colorCategory
+        +string section
     }
     class RetrievalResult {
         +IndexedChunk chunk
@@ -57,8 +59,9 @@ classDiagram
     ProviderConfig ..> WorkflowResult : produced via
 ```
 
-(`page`/`colorCategory` on `IndexedChunk` are Sprint 3 extensions of the current
-`src/retrieval/types.ts` stub, per S3-02.)
+(`chunkId`/`page`/`colorCategory`/`section` on `IndexedChunk` are Sprint 3
+extensions of the original stub, per S3-02. `page` is a string reader page
+label — not a numeric index — since PDF page labels can be roman numerals.)
 
 ## 2. Storage map
 

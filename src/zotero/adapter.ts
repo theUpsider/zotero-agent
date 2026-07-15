@@ -31,6 +31,23 @@ export function getSelectedItemRefs(window: _ZoteroTypes.MainWindow): SelectedIt
     }));
 }
 
+/** Every top-level regular item across all libraries (S3-06/S3-07: full
+ * index rebuild, and sweep-reconcile after an unresolvable notifier event). */
+export async function listAllItemRefs(logger: Logger): Promise<ItemRef[]> {
+  const refs: ItemRef[] = [];
+  for (const library of Zotero.Libraries.getAll()) {
+    try {
+      const items = await Zotero.Items.getAll(library.libraryID, true);
+      for (const item of items) {
+        if (item.isRegularItem()) refs.push({ libraryID: item.libraryID, key: item.key });
+      }
+    } catch (error) {
+      logger.error(`listing items in library ${library.libraryID} failed`, error);
+    }
+  }
+  return refs;
+}
+
 /** Read annotations of an item's PDF attachments (research guide §6.4). */
 export async function getItemAnnotations(item: Zotero.Item): Promise<AnnotationInfo[]> {
   const annotations: AnnotationInfo[] = [];

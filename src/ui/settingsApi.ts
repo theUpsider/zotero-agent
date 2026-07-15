@@ -16,6 +16,7 @@ import {
   serializeColorSemantics,
   type ColorSemantics,
 } from "../core/colorSemantics";
+import type { IndexAdmin, IndexStatus } from "../retrieval/indexManager";
 import {
   testConnection,
   type ProviderGateDeps,
@@ -35,9 +36,14 @@ export interface SettingsApi {
   resetColorSemantics(): ColorSemantics;
   /** Standard Zotero annotation colors, name → hex (FR-026). */
   standardColors(): Record<string, string>;
+  /** null when retrieval failed to initialize (S3-08) — ui/ reaches
+   * retrieval/ for status only, never a concrete backend (component view §3). */
+  indexStatus(): IndexStatus | null;
+  rebuildIndex(): void;
+  cancelIndexRebuild(): void;
 }
 
-export function createSettingsApi(deps: ProviderGateDeps): SettingsApi {
+export function createSettingsApi(deps: ProviderGateDeps, index?: IndexAdmin): SettingsApi {
   const prefs: PrefStore = deps.prefs;
   return {
     listProviders: () => deps.registry.entries(),
@@ -72,5 +78,9 @@ export function createSettingsApi(deps: ProviderGateDeps): SettingsApi {
     },
 
     standardColors: () => ({ ...ZOTERO_ANNOTATION_COLORS }),
+
+    indexStatus: () => index?.status() ?? null,
+    rebuildIndex: () => index?.rebuild(),
+    cancelIndexRebuild: () => index?.cancelRebuild(),
   };
 }

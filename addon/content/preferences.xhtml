@@ -52,6 +52,23 @@
     </html:div>
   </groupbox>
 
+  <groupbox id="za-index-groupbox">
+    <label><html:h2>Local index</html:h2></label>
+    <html:p class="za-hint">The assistant keeps a local, searchable copy of your papers, notes,
+      and highlights so it can work with long PDFs without sending the whole document each time.
+      Everything stays on this computer.</html:p>
+
+    <html:p id="za-index-coverage" class="za-hint"></html:p>
+    <html:p id="za-index-updated" class="za-hint"></html:p>
+    <html:progress id="za-index-progress" max="100" value="0" hidden="hidden"/>
+
+    <html:div class="za-row">
+      <button id="za-index-rebuild" label="Rebuild index"/>
+      <button id="za-index-cancel" label="Cancel" hidden="hidden"/>
+      <html:span id="za-index-status" class="za-status"></html:span>
+    </html:div>
+  </groupbox>
+
   <html:p id="za-not-ready" class="za-error" hidden="hidden">The plugin is still starting up.
     Close this window and try again in a moment.</html:p>
 </vbox>

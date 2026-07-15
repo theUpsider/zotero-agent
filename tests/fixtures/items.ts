@@ -50,3 +50,21 @@ export function itemContext(overrides: Partial<ItemContext> = {}): ItemContext {
     ...overrides,
   };
 }
+
+/** Multi-page fixture (form-feed page breaks, long unicode paragraph with
+ * CJK + emoji + combining marks) for chunker/retrieval tests. */
+export function largePdfItem(overrides: Partial<ItemContext> = {}): ItemContext {
+  const paragraph = (n: number) => `Paragraph ${n} discusses the method in detail. `.repeat(20);
+  const unicodeParagraph =
+    "研究の背景と目的について説明する。".repeat(10) +
+    " emoji test \u{1F600}\u{1F4DA} combining é test " +
+    "结论与讨论。".repeat(10);
+  const page1 = [paragraph(1), paragraph(2), unicodeParagraph].join("\n\n");
+  const page2 = [paragraph(3), paragraph(4)].join("\n\n");
+  const page3 = [paragraph(5)].join("\n\n");
+  return itemContext({
+    pdfText: [page1, page2, page3].join("\f"),
+    pdfTextSource: "pdf-worker",
+    ...overrides,
+  });
+}

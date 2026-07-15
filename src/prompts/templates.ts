@@ -8,6 +8,9 @@ export interface PromptTemplate {
   category?: string;
   /** Prompt body; {{context}} is replaced with retrieved paper content. */
   template: string;
+  /** One-line topical query used as the retrieval query text (S3-05) when the
+   * item's PDF text exceeds the token budget; falls back to `label` if unset. */
+  retrievalHint?: string;
 }
 
 export const PROMPT_TEMPLATES: readonly PromptTemplate[] = [
@@ -18,6 +21,7 @@ export const PROMPT_TEMPLATES: readonly PromptTemplate[] = [
     template:
       "Extract and summarize the methodology of the following paper content. " +
       "Describe study design, methods, and procedures.\n\n{{context}}",
+    retrievalHint: "study design, methods, and procedures",
   },
   {
     id: "results",
@@ -25,6 +29,7 @@ export const PROMPT_TEMPLATES: readonly PromptTemplate[] = [
     category: "results",
     template:
       "Summarize the key results and findings of the following paper content.\n\n{{context}}",
+    retrievalHint: "key results and findings",
   },
   {
     id: "literature",
@@ -33,6 +38,7 @@ export const PROMPT_TEMPLATES: readonly PromptTemplate[] = [
     template:
       "Summarize the related work and literature context referenced in the " +
       "following paper content.\n\n{{context}}",
+    retrievalHint: "related work and literature context",
   },
   {
     id: "limitations",
@@ -41,6 +47,7 @@ export const PROMPT_TEMPLATES: readonly PromptTemplate[] = [
     template:
       "Identify and summarize the limitations stated or implied in the " +
       "following paper content.\n\n{{context}}",
+    retrievalHint: "limitations",
   },
   {
     id: "research-question",
@@ -49,6 +56,7 @@ export const PROMPT_TEMPLATES: readonly PromptTemplate[] = [
     template:
       "Identify the research question(s) or hypotheses addressed in the " +
       "following paper content.\n\n{{context}}",
+    retrievalHint: "research question or hypotheses",
   },
   {
     id: "data",
@@ -57,6 +65,7 @@ export const PROMPT_TEMPLATES: readonly PromptTemplate[] = [
     template:
       "Describe the datasets, data sources, and data collection described in " +
       "the following paper content.\n\n{{context}}",
+    retrievalHint: "datasets, data sources, and data collection",
   },
   {
     id: "open-points",
@@ -65,6 +74,7 @@ export const PROMPT_TEMPLATES: readonly PromptTemplate[] = [
     template:
       "Identify open problems, unanswered questions, and future work mentioned " +
       "in the following paper content.\n\n{{context}}",
+    retrievalHint: "open problems, unanswered questions, and future work",
   },
 ];
 

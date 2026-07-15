@@ -20,5 +20,23 @@ pref("extensions.zotero-agent.provider.requestTimeoutMs", 30000);
 // JSON-serialized color-to-category mapping; empty means built-in defaults.
 pref("extensions.zotero-agent.colorSemantics", "");
 
-// Per-item character budget for PDF full text in composed prompts (S2-03).
+// Per-item character budget for PDF full text in composed prompts; fallback
+// cap used when an item isn't indexed yet (S2-03; retained by S3-05).
 pref("extensions.zotero-agent.context.charBudgetPerItem", 20000);
+
+// Soft per-item token budget; over this, retrieval passages replace full
+// text when the item is indexed (S3-05).
+pref("extensions.zotero-agent.context.tokenBudgetPerItem", 4000);
+
+// Local retrieval index (S3-06).
+pref("extensions.zotero-agent.retrieval.enabled", true);
+// Local embeddings on/off; defaults off until the day-1 wasm runtime probe
+// (S3-03) is confirmed in a live Zotero profile. Retrieval always falls back
+// to keyword-only when this is off or embedding fails.
+pref("extensions.zotero-agent.retrieval.embeddings", false);
+// Max retrieved passages considered per over-budget item (S3-05).
+pref("extensions.zotero-agent.retrieval.passagesPerItem", 12);
+
+// Exposes Zotero.ZoteroAgent.dev.probeRetrieval() for the day-1 wasm runtime
+// probe (S3-03); off by default, dev/QA only.
+pref("extensions.zotero-agent.devTools", false);

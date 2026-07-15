@@ -20,9 +20,23 @@ export const PREF_KEYS = {
   openaiApiKeyFallback: `${PREFS_PREFIX}.credentialFallback.provider.openaiCompatible.apiKey`,
   colorSemantics: `${PREFS_PREFIX}.colorSemantics`,
   requestTimeoutMs: `${PREFS_PREFIX}.provider.requestTimeoutMs`,
-  /** Per-item character budget for PDF full text in composed prompts; interim
-   * cap until retrieval lands in Sprint 3 (S2-03). */
+  /** Per-item character budget for PDF full text in composed prompts; fallback
+   * cap used when an item isn't indexed yet (S2-03; retained by S3-05). */
   contextCharBudget: `${PREFS_PREFIX}.context.charBudgetPerItem`,
+  /** Soft per-item token budget; over this, retrieval passages replace full
+   * text when the item is indexed (S3-05, NFR-004). */
+  contextTokenBudget: `${PREFS_PREFIX}.context.tokenBudgetPerItem`,
+  /** Master switch for the local retrieval index (S3-05/S3-06). */
+  retrievalEnabled: `${PREFS_PREFIX}.retrieval.enabled`,
+  /** Local embeddings on/off; auto-degrades to keyword-only on failure
+   * regardless of this pref. Defaults off until the day-1 wasm runtime probe
+   * (S3-03) is confirmed in a live Zotero profile. */
+  retrievalEmbeddings: `${PREFS_PREFIX}.retrieval.embeddings`,
+  /** Max retrieved passages considered per over-budget item (S3-05). */
+  retrievalPassagesPerItem: `${PREFS_PREFIX}.retrieval.passagesPerItem`,
+  /** Exposes `Zotero.ZoteroAgent.dev.probeRetrieval()` for the day-1 wasm
+   * runtime probe (S3-03); off by default, dev/QA only. */
+  devTools: `${PREFS_PREFIX}.devTools`,
 } as const;
 
 /** Typed defaults for every key; invalid stored values fall back to these. */
@@ -35,6 +49,11 @@ export const PREF_DEFAULTS: Record<string, string | number | boolean> = {
   [PREF_KEYS.colorSemantics]: "",
   [PREF_KEYS.requestTimeoutMs]: 30000,
   [PREF_KEYS.contextCharBudget]: 20000,
+  [PREF_KEYS.contextTokenBudget]: 4000,
+  [PREF_KEYS.retrievalEnabled]: true,
+  [PREF_KEYS.retrievalEmbeddings]: false,
+  [PREF_KEYS.retrievalPassagesPerItem]: 12,
+  [PREF_KEYS.devTools]: false,
 };
 
 export interface PrefStore {

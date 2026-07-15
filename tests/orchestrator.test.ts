@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { PrefStore } from "../src/core/config";
 import { AuthenticationError, noopLogger, ProviderResponseError } from "../src/core/errors";
 import type { AIProvider, CompletionRequest } from "../src/providers/types";
+import type { RetrievalBackend, RetrievalQuery, RetrievalResult } from "../src/retrieval/types";
 import {
   createWorkflowOrchestrator,
   listTemplateWorkflows,
+  type OrchestratorRetrievalDeps,
   type WorkflowEvent,
   type WorkflowOrchestrator,
 } from "../src/workflows/orchestrator";
@@ -54,11 +56,27 @@ const twoItems = [
   itemContext({ ref: { libraryID: 1, key: "BBB" }, metadata: metadata({ key: "BBB", title: "Paper B" }) }),
 ];
 
+function fakeBackend(
+  query: (q: RetrievalQuery) => Promise<RetrievalResult[]> = async () => [],
+  indexedKeys: string[] = [],
+): RetrievalBackend & { query: ReturnType<typeof vi.fn> } {
+  return {
+    indexItem: vi.fn(async () => undefined),
+    removeItem: vi.fn(async () => undefined),
+    query: vi.fn(query),
+    rebuild: vi.fn(async () => undefined),
+    listIndexedItemKeys: vi.fn(async () => indexedKeys),
+    stats: vi.fn(async () => ({ itemCount: indexedKeys.length, chunkCount: 0, vectorSearch: false })),
+  };
+}
+
 function setup(overrides: {
   provider?: AIProvider;
   ensureProvider?: () => Promise<AIProvider>;
   reader?: ItemContextReader;
   contexts?: ItemContext[];
+  prefs?: Record<string, unknown>;
+  retrieval?: OrchestratorRetrievalDeps;
 } = {}) {
   const provider = overrides.provider ?? fakeProvider();
   const reader = overrides.reader ?? fakeReader(overrides.contexts ?? twoItems);
@@ -67,8 +85,9 @@ function setup(overrides: {
     ensureProvider: overrides.ensureProvider ?? (async () => provider),
     reader,
     noteWriter,
-    prefs: fakePrefs(),
+    prefs: fakePrefs(overrides.prefs),
     logger: noopLogger,
+    ...(overrides.retrieval ? { retrieval: overrides.retrieval } : {}),
   });
   const events: WorkflowEvent[] = [];
   orchestrator.subscribe((event) => events.push(event));
@@ -231,6 +250,75 @@ describe("template workflow run", () => {
     const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
     expect(completed.result.truncationNotice).toContain("AAA");
     expect(completed.result.sections[0]?.truncated).toBe(true);
+  });
+});
+
+describe("retrieval-augmented context (S3-05)", () => {
+  const bigItem = (key: string) =>
+    itemContext({
+      ref: { libraryID: 1, key },
+      metadata: metadata({ key }),
+      pdfText: "word ".repeat(10000),
+      pdfTextSource: "pdf-worker",
+    });
+
+  it("uses retrieved passages and drops the truncation notice when the item is indexed", async () => {
+    const backend = fakeBackend(
+      async () => [
+        {
+          chunk: { itemKey: "AAA", source: "pdf-text", text: "the important finding", chunkId: "AAA:pdf-text:0" },
+          score: 1,
+        },
+      ],
+      ["AAA"],
+    );
+    const prompts: string[] = [];
+    const provider = fakeProvider(async (request) => {
+      prompts.push(request.messages[0]!.content);
+      return { text: "ok" };
+    });
+    const { orchestrator, events } = setup({
+      provider,
+      contexts: [bigItem("AAA")],
+      retrieval: { backend },
+    });
+    await orchestrator.run({ kind: "template", templateId: "results", items: [{ libraryID: 1, key: "AAA" }] });
+
+    expect(backend.query).toHaveBeenCalledWith(
+      expect.objectContaining({ itemKeys: ["AAA"], mode: "hybrid" }),
+    );
+    expect(prompts[0]).toContain("the important finding");
+    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(completed.result.truncationNotice).toBeUndefined();
+    expect(completed.result.sections[0]?.truncated).toBe(false);
+  });
+
+  it("falls back to the truncation notice and enqueues reindexing when the item isn't indexed", async () => {
+    const backend = fakeBackend(async () => [], []);
+    const enqueueReindex = vi.fn();
+    const { orchestrator, events } = setup({
+      contexts: [bigItem("AAA")],
+      retrieval: { backend, enqueueReindex },
+    });
+    await orchestrator.run({ kind: "template", templateId: "results", items: [{ libraryID: 1, key: "AAA" }] });
+
+    expect(enqueueReindex).toHaveBeenCalledWith([{ libraryID: 1, key: "AAA" }]);
+    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(completed.result.truncationNotice).toContain("AAA");
+  });
+
+  it("does not query the backend at all when no item is over budget", async () => {
+    const backend = fakeBackend();
+    const { orchestrator } = setup({ retrieval: { backend } });
+    await orchestrator.run({ kind: "template", templateId: "results", items: refs });
+    expect(backend.query).not.toHaveBeenCalled();
+  });
+
+  it("keeps Sprint 2 behavior unchanged when no retrieval dep is configured", async () => {
+    const { orchestrator, events } = setup({ contexts: [bigItem("AAA")] });
+    await orchestrator.run({ kind: "template", templateId: "results", items: [{ libraryID: 1, key: "AAA" }] });
+    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(completed.result.truncationNotice).toContain("AAA");
   });
 });
 
