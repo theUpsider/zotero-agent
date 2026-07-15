@@ -16,7 +16,12 @@ import { createIndexManager, type IndexManager } from "./retrieval/indexManager"
 import { createOramaBackend } from "./retrieval/oramaBackend";
 import { defaultReranker } from "./retrieval/rerank";
 import { createSettingsApi, type SettingsApi } from "./ui/settingsApi";
-import { createWorkflowUiApi, type NamedWorkflowMode, type WorkflowUiApi } from "./ui/workflowApi";
+import {
+  createWorkflowUiApi,
+  type NamedWorkflowMode,
+  type ResultViewSession,
+  type WorkflowUiApi,
+} from "./ui/workflowApi";
 import {
   createHighlightWriter,
   createItemContextReader,
@@ -333,13 +338,14 @@ export class ZoteroAgentPlugin {
     if (!workflows) return;
     const items = getSelectedItemRefs(window);
     if (items.length === 0) return;
-    workflows.setSession({
+    const session: ResultViewSession = {
       mode: "template",
       templateId: template.id,
       templateLabel: template.label,
       items,
-    });
-    void this.openResultView(window).then(() => {
+    };
+    workflows.setSession(session);
+    void this.openResultView(window, session).then(() => {
       const started = workflows.startTemplate(
         template.id,
         items.map(({ libraryID, key }) => ({ libraryID, key })),
@@ -361,8 +367,9 @@ export class ZoteroAgentPlugin {
     if (!workflows) return;
     const items = getSelectedItemRefs(window);
     if (items.length === 0) return;
-    workflows.setSession({ mode, title, items });
-    void this.openResultView(window).then(() => {
+    const session: ResultViewSession = { mode, title, items };
+    workflows.setSession(session);
+    void this.openResultView(window, session).then(() => {
       const started = workflows.startWorkflow(
         mode,
         items.map(({ libraryID, key }) => ({ libraryID, key })),
@@ -379,16 +386,26 @@ export class ZoteroAgentPlugin {
     const items = getSelectedItemRefs(window);
     if (items.length === 0) return;
     // The run starts from inside the view once the user entered a prompt.
-    workflows.setSession({ mode: "free-prompt", items });
-    void this.openResultView(window);
+    const session: ResultViewSession = { mode: "free-prompt", items };
+    workflows.setSession(session);
+    void this.openResultView(window, session);
   }
 
-  /** Open (or focus) the single result-view window (FR-091, FR-098). Resolves
-   * once the view has subscribed to workflow events — starting a workflow
-   * before that would fire "started"/"completed" into a window that isn't
-   * listening yet, leaving the modal empty (S2-05 regression). Reusing an
-   * already-open window resolves immediately since it subscribed long ago. */
-  private openResultView(window: _ZoteroTypes.MainWindow): Promise<void> {
+  /** Open (or focus) the single result-view window (FR-091, FR-098). The
+   * session is passed as a dialog argument so the view can render the
+   * header and per-item placeholders synchronously, before it has even
+   * found the (possibly still-initializing) workflow API — a slow or
+   * missed "view-ready" handshake then only delays live progress updates,
+   * never leaves the window blank (S2-05 regression, recurrence found
+   * 2026-07-15). The returned promise still resolves once the view has
+   * subscribed to workflow events, since starting a workflow before that
+   * would fire "started"/"completed" into a window nobody is listening to
+   * yet. Reusing an already-open window resolves immediately since it
+   * subscribed long ago. */
+  private openResultView(
+    window: _ZoteroTypes.MainWindow,
+    session?: ResultViewSession,
+  ): Promise<void> {
     if (!this.info) return Promise.resolve();
     if (this.resultWindow && !this.resultWindow.closed) {
       this.resultWindow.focus();
@@ -400,6 +417,7 @@ export class ZoteroAgentPlugin {
       this.info.rootURI + "content/resultView.xhtml",
       RESULT_WINDOW_NAME,
       "chrome,dialog=no,resizable,centerscreen,width=780,height=620",
+      session ?? null,
     );
     this.resultWindow = win;
     if (!win) return Promise.resolve();

@@ -18,6 +18,13 @@
   const doc = document;
   const $ = (id) => doc.getElementById(id);
 
+  /* plugin.ts passes the session as a dialog argument so the header and
+   * per-item placeholders can render immediately — independent of whether
+   * Zotero.ZoteroAgent has finished initializing yet (see ensureReady
+   * below). Without this the window stayed visibly blank for as long as
+   * that poll/handshake took, even though nothing was actually broken. */
+  const initialSession = (window.arguments && window.arguments[0]) || null;
+
   /* initAsync (credential-store probe, retrieval init, orchestrator wiring)
    * can still be running when this window opens, so Zotero.ZoteroAgent may
    * not exist yet. Poll briefly instead of failing permanently — a one-shot
@@ -92,9 +99,50 @@
     hasSections = false;
   }
 
-  function appendSection(title, markdown) {
-    const container = doc.createElement("div");
+  /* One placeholder card per item, shown the instant the window opens (or a
+   * run starts) — filled in place by appendSection as each item's result
+   * arrives, rather than the results pane staying empty until then. */
+  function renderSkeleton(sess) {
+    for (const item of sess.items) {
+      const container = doc.createElement("div");
+      container.className = "za-section";
+      container.dataset.itemKey = item.key;
+      const heading = doc.createElement("h2");
+      heading.textContent = item.title || item.key;
+      container.appendChild(heading);
+      const body = doc.createElement("div");
+      body.className = "za-section-body za-hint";
+      body.textContent = "Waiting for analysis…";
+      container.appendChild(body);
+      $("za-results").appendChild(container);
+    }
+  }
+
+  /* Clears the pane and re-seeds it with placeholders for the current
+   * session's items — free-prompt has no per-item cards (one combined
+   * answer, only shown once the user runs it). */
+  function resetForSession(sess) {
+    clearResults();
+    if (sess && sess.mode !== "free-prompt") renderSkeleton(sess);
+  }
+
+  function findPendingCard(itemKey) {
+    return itemKey
+      ? $("za-results").querySelector(`[data-item-key="${CSS.escape(String(itemKey))}"]`)
+      : null;
+  }
+
+  /* section: { ref?, title, markdown }. Fills the matching placeholder card
+   * in place when one exists (keeping order/position stable); otherwise
+   * appends a new one (free-prompt's single combined answer, or a
+   * lastResult() backfill for an item whose card was never seeded). */
+  function appendSection(section) {
+    const { ref, title, markdown } = section;
+    const pending = findPendingCard(ref && ref.key);
+    const container = pending || doc.createElement("div");
     container.className = "za-section";
+    container.replaceChildren();
+    delete container.dataset.itemKey;
     if (title) {
       const heading = doc.createElement("h2");
       heading.textContent = title;
@@ -106,21 +154,25 @@
      * output cannot inject markup here. */
     body.innerHTML = api.renderMarkdown(markdown);
     container.appendChild(body);
-    $("za-results").appendChild(container);
+    if (!pending) $("za-results").appendChild(container);
     hasSections = true;
   }
 
-  function showHeader() {
-    session = api.getSession();
-    const titles = session ? session.items.map((i) => i.title || i.key).join(", ") : "";
-    if (session && session.mode === "free-prompt") {
+  function renderSessionHeader(sess) {
+    session = sess;
+    const titles = sess ? sess.items.map((i) => i.title || i.key).join(", ") : "";
+    if (sess && sess.mode === "free-prompt") {
       $("za-run-title").textContent = "Free prompt";
       $("za-prompt-pane").hidden = false;
-    } else if (session) {
-      $("za-run-title").textContent = session.title || session.templateLabel || "Analysis";
+    } else if (sess) {
+      $("za-run-title").textContent = sess.title || sess.templateLabel || "Analysis";
       $("za-prompt-pane").hidden = true;
     }
     $("za-item-list").textContent = titles;
+  }
+
+  function showHeader() {
+    renderSessionHeader(api.getSession());
   }
 
   /* ---------- workflow events ---------- */
@@ -128,7 +180,7 @@
   function onEvent(event) {
     switch (event.type) {
       case "started":
-        clearResults();
+        resetForSession(session);
         setRunningUi(true);
         setStatus("Starting…");
         setProgress(undefined);
@@ -138,12 +190,12 @@
         setProgress(event.fraction);
         break;
       case "item-completed":
-        appendSection(event.section.title, event.section.markdown);
+        appendSection(event.section);
         break;
       case "completed":
         /* Template sections streamed in via item-completed; a free-prompt
          * answer arrives only here. */
-        if (!hasSections) appendSection("", event.result.content);
+        if (!hasSections) appendSection({ title: "", markdown: event.result.content });
         if (event.result.truncationNotice) {
           const note = $("za-truncation-note");
           note.textContent = event.result.truncationNotice;
@@ -226,6 +278,14 @@
 
   /* ---------- wiring ---------- */
 
+  /* Render header + placeholders now, synchronously, before ensureReady even
+   * starts polling — the window must never sit blank while that settles. */
+  if (initialSession) {
+    renderSessionHeader(initialSession);
+    resetForSession(initialSession);
+    setStatus(initialSession.mode === "free-prompt" ? "Enter a prompt to start." : "Starting…");
+  }
+
   ensureReady(() => {
     $("za-prompt-run").addEventListener("click", runFreePrompt);
     $("za-prompt-input").addEventListener("keydown", (event) => {
@@ -249,7 +309,7 @@
     window.addEventListener("zotero-agent-session-changed", () => {
       showHeader();
       if (!api.isRunning()) {
-        clearResults();
+        resetForSession(session);
         setStatus("");
         setRunningUi(false);
       }
@@ -268,9 +328,9 @@
       const result = api.lastResult();
       if (result) {
         for (const section of result.sections) {
-          appendSection(section.title, section.markdown);
+          appendSection(section);
         }
-        if (!hasSections) appendSection("", result.content);
+        if (!hasSections) appendSection({ title: "", markdown: result.content });
         if (result.truncationNotice) {
           const note = $("za-truncation-note");
           note.textContent = result.truncationNotice;
