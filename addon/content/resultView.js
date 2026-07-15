@@ -18,12 +18,30 @@
   const doc = document;
   const $ = (id) => doc.getElementById(id);
 
+  // Temporary diagnostics (2026-07-15): route any script-level error into
+  // the Debug Output Log, since this window's own errors may not surface in
+  // the Browser Console the way content-window errors do.
+  window.addEventListener("error", (event) => {
+    try {
+      Zotero.debug(
+        `[zotero-agent] resultView window error: ${event.message} @ ${event.filename}:${event.lineno}`,
+      );
+    } catch (_) {
+      // Zotero itself unreachable; nothing more we can do.
+    }
+  });
+
   /* plugin.ts passes the session as a dialog argument so the header and
    * per-item placeholders can render immediately — independent of whether
    * Zotero.ZoteroAgent has finished initializing yet (see ensureReady
    * below). Without this the window stayed visibly blank for as long as
    * that poll/handshake took, even though nothing was actually broken. */
   const initialSession = (window.arguments && window.arguments[0]) || null;
+  Zotero.debug(
+    `[zotero-agent] resultView: arguments=${window.arguments ? window.arguments.length : "none"} initialSession=${
+      initialSession ? JSON.stringify({ mode: initialSession.mode, items: initialSession.items.length }) : "null"
+    }`,
+  );
 
   /* initAsync (credential-store probe, retrieval init, orchestrator wiring)
    * can still be running when this window opens, so Zotero.ZoteroAgent may
@@ -284,6 +302,11 @@
     renderSessionHeader(initialSession);
     resetForSession(initialSession);
     setStatus(initialSession.mode === "free-prompt" ? "Enter a prompt to start." : "Starting…");
+    Zotero.debug(
+      `[zotero-agent] resultView: skeleton rendered, za-results children=${$("za-results").children.length}`,
+    );
+  } else {
+    Zotero.debug("[zotero-agent] resultView: no initialSession — skipping synchronous prefill");
   }
 
   ensureReady(() => {

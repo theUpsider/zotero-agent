@@ -407,18 +407,36 @@ export class ZoteroAgentPlugin {
     session?: ResultViewSession,
   ): Promise<void> {
     if (!this.info) return Promise.resolve();
-    if (this.resultWindow && !this.resultWindow.closed) {
-      this.resultWindow.focus();
-      // Tell the open view to pick up the new session.
-      this.resultWindow.dispatchEvent(new Event("zotero-agent-session-changed"));
+    // A window whose XUL document failed to load (e.g. a parse error) can
+    // become a "dead object" wrapper — every property access on it throws
+    // rather than reading false/null, so a plain truthiness/`.closed` check
+    // isn't enough to detect it.
+    try {
+      if (this.resultWindow && !this.resultWindow.closed) {
+        this.resultWindow.focus();
+        // Tell the open view to pick up the new session.
+        this.resultWindow.dispatchEvent(new Event("zotero-agent-session-changed"));
+        return Promise.resolve();
+      }
+    } catch (error) {
+      this.log(`stale result window reference discarded: ${error instanceof Error ? error.message : String(error)}`);
+      this.resultWindow = null;
+    }
+    const url = this.info.rootURI + "content/resultView.xhtml";
+    this.log(`opening result view: ${url}`);
+    let win: Window | null = null;
+    try {
+      win = window.openDialog(
+        url,
+        RESULT_WINDOW_NAME,
+        "chrome,dialog=no,resizable,centerscreen,width=780,height=620",
+        session ?? null,
+      );
+    } catch (error) {
+      this.log(`openDialog threw: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
       return Promise.resolve();
     }
-    const win = window.openDialog(
-      this.info.rootURI + "content/resultView.xhtml",
-      RESULT_WINDOW_NAME,
-      "chrome,dialog=no,resizable,centerscreen,width=780,height=620",
-      session ?? null,
-    );
+    this.log(`openDialog returned: ${win ? "window" : String(win)}`);
     this.resultWindow = win;
     if (!win) return Promise.resolve();
     return new Promise((resolve) => {
