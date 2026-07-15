@@ -30,6 +30,7 @@ export interface ProviderGateDeps {
   registry: ProviderRegistry;
   fetch: FetchLike;
   logger: Logger;
+  createAbortController?: () => AbortController;
 }
 
 /** Resolve prefs + stored credential into settings for the active provider. */
@@ -66,7 +67,11 @@ function instantiateActiveProvider(
       `Unknown AI provider '${id}'. Select a provider in the settings.`,
     );
   }
-  return deps.registry.create(id, settings, { fetch: deps.fetch, logger: deps.logger });
+  return deps.registry.create(id, settings, {
+    fetch: deps.fetch,
+    logger: deps.logger,
+    createAbortController: deps.createAbortController,
+  });
 }
 
 /** Workflow precondition gate: returns the validated provider or throws a
@@ -96,9 +101,11 @@ export async function testConnection(deps: ProviderGateDeps): Promise<TestConnec
     const provider = instantiateActiveProvider(deps, id, settings);
     const result = await provider.validateConfig();
     if (result.ok) return { ok: true, message: result.message };
+    deps.logger.error("test connection failed", result.error);
     return { ok: false, code: result.error.code, message: toUserMessage(result.error) };
   } catch (error) {
     const code: ErrorCode = error instanceof AgentError ? error.code : "unknown";
+    deps.logger.error("test connection failed", error);
     return { ok: false, code, message: toUserMessage(error) };
   }
 }

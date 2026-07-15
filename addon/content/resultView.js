@@ -18,10 +18,42 @@
   const doc = document;
   const $ = (id) => doc.getElementById(id);
 
-  const api = Zotero && Zotero.ZoteroAgent && Zotero.ZoteroAgent.workflows;
-  if (!api) {
-    $("za-not-ready").hidden = false;
-    return;
+  /* initAsync (credential-store probe, retrieval init, orchestrator wiring)
+   * can still be running when this window opens, so Zotero.ZoteroAgent may
+   * not exist yet. Poll briefly instead of failing permanently — a one-shot
+   * check here previously meant every button silently stayed dead and the
+   * "view-ready" handshake below never fired, so plugin.ts would time out
+   * and start the workflow with nobody listening. */
+  let api = null;
+
+  function ensureReady(onReady) {
+    const found = () => Zotero && Zotero.ZoteroAgent && Zotero.ZoteroAgent.workflows;
+    const existing = found();
+    if (existing) {
+      api = existing;
+      onReady();
+      return;
+    }
+    const note = $("za-not-ready");
+    let attempts = 0;
+    // Must settle before plugin.ts's own 5s "view-ready" wait
+    // (see openResultView) gives up and starts the workflow blind — a longer
+    // cap here would silently reopen the original empty-modal race.
+    const maxAttempts = 18;
+    const timer = setInterval(() => {
+      attempts += 1;
+      const ready = found();
+      if (ready) {
+        clearInterval(timer);
+        api = ready;
+        if (note) note.hidden = true;
+        onReady();
+      } else if (attempts >= maxAttempts) {
+        clearInterval(timer);
+        if (note) note.hidden = false;
+      }
+    }, 250);
+    window.addEventListener("unload", () => clearInterval(timer));
   }
 
   let session = null;
@@ -194,36 +226,43 @@
 
   /* ---------- wiring ---------- */
 
-  $("za-prompt-run").addEventListener("click", runFreePrompt);
-  $("za-prompt-input").addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) runFreePrompt();
-  });
-  $("za-cancel").addEventListener("click", () => api.cancel());
-  $("za-save").addEventListener("click", saveAsNotes);
-  $("za-copy").addEventListener("click", copyResult);
-  $("za-rerun").addEventListener("click", rerun);
+  ensureReady(() => {
+    $("za-prompt-run").addEventListener("click", runFreePrompt);
+    $("za-prompt-input").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) runFreePrompt();
+    });
+    $("za-cancel").addEventListener("click", () => api.cancel());
+    $("za-save").addEventListener("click", saveAsNotes);
+    $("za-copy").addEventListener("click", copyResult);
+    $("za-rerun").addEventListener("click", rerun);
 
-  const unsubscribe = api.subscribe(onEvent);
-  window.addEventListener("unload", unsubscribe);
+    const unsubscribe = api.subscribe(onEvent);
+    window.addEventListener("unload", unsubscribe);
 
-  /* plugin.ts dispatches this when the user starts a new workflow while the
-   * window is already open (single reusable window, FR-098). */
-  window.addEventListener("zotero-agent-session-changed", () => {
+    /* Tells plugin.ts it is safe to start a workflow now: events emitted
+     * before this point (e.g. the synchronous "started" event) would
+     * otherwise be lost and the modal would appear empty. */
+    window.dispatchEvent(new Event("zotero-agent-view-ready"));
+
+    /* plugin.ts dispatches this when the user starts a new workflow while the
+     * window is already open (single reusable window, FR-098). */
+    window.addEventListener("zotero-agent-session-changed", () => {
+      showHeader();
+      if (!api.isRunning()) {
+        clearResults();
+        setStatus("");
+        setRunningUi(false);
+      }
+    });
+
     showHeader();
-    if (!api.isRunning()) {
-      clearResults();
-      setStatus("");
+    if (api.isRunning()) {
+      setRunningUi(true);
+      setStatus("Running…");
+      setProgress(undefined);
+    } else {
       setRunningUi(false);
+      setStatus(session && session.mode === "free-prompt" ? "Enter a prompt to start." : "");
     }
   });
-
-  showHeader();
-  if (api.isRunning()) {
-    setRunningUi(true);
-    setStatus("Running…");
-    setProgress(undefined);
-  } else {
-    setRunningUi(false);
-    setStatus(session && session.mode === "free-prompt" ? "Enter a prompt to start." : "");
-  }
 })();

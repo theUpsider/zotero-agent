@@ -13,11 +13,45 @@
   const doc = document;
   const $ = (id) => doc.getElementById(id);
 
-  const api = Zotero.ZoteroAgent && Zotero.ZoteroAgent.settings;
-  if (!api) {
-    const note = $("za-not-ready");
-    if (note) note.hidden = false;
-    return;
+  /* initAsync (credential-store probe, retrieval init, pane registration) can
+   * still be running when this pane first loads, so Zotero.ZoteroAgent may
+   * not exist yet. Poll briefly instead of failing permanently — otherwise
+   * every control silently stays dead for the lifetime of this pane. */
+  let api = null;
+
+  function ensureReady(onReady) {
+    /* Zotero loads the pane's scripts via loadSubScript BEFORE parsing and
+     * inserting the pane's own XHTML fragment into the document (see
+     * preferences.js _loadPane in Zotero core) — so on every load, every
+     * element from preferences.xhtml, including "za-not-ready" itself, is
+     * genuinely absent from the DOM at the moment this script first runs.
+     * Wait for the fragment root too, not just the settings API. */
+    const apiReady = () => Zotero.ZoteroAgent && Zotero.ZoteroAgent.settings;
+    const domReady = () => doc.getElementById("zotero-agent-prefs") != null;
+    const found = () => domReady() && apiReady();
+    const existing = found();
+    if (existing) {
+      api = apiReady();
+      onReady();
+      return;
+    }
+    let attempts = 0;
+    const timer = setInterval(() => {
+      attempts += 1;
+      const ready = found();
+      if (ready) {
+        clearInterval(timer);
+        api = apiReady();
+        const note = $("za-not-ready");
+        if (note) note.hidden = true;
+        onReady();
+      } else if (attempts >= 40) {
+        clearInterval(timer);
+        const note = $("za-not-ready");
+        if (note) note.hidden = false;
+      }
+    }, 250);
+    window.addEventListener("unload", () => clearInterval(timer));
   }
 
   /* ---------- Provider section ---------- */
@@ -75,7 +109,7 @@
       refreshKeyNote();
     });
 
-    clearButton.addEventListener("command", async () => {
+    clearButton.addEventListener("click", async () => {
       await api.clearApiKey();
       input.value = "";
       input.placeholder = "Leave empty for local services";
@@ -86,7 +120,7 @@
   function initTestConnection() {
     const button = $("za-test-connection");
     const result = $("za-test-result");
-    button.addEventListener("command", async () => {
+    button.addEventListener("click", async () => {
       button.disabled = true;
       result.textContent = "Testing…";
       result.className = "za-status";
@@ -102,7 +136,10 @@
 
   /* ---------- Color semantics section (S1-07) ---------- */
 
-  let mapping = api.getColorSemantics();
+  // Set inside initColorSection(), once `api` is ready — this used to run at
+  // script load time and threw on the null placeholder, aborting the whole
+  // script before ensureReady() ever got a chance to run.
+  let mapping = {};
 
   function colorName(hex) {
     const colors = api.standardColors();
@@ -226,8 +263,9 @@
   }
 
   function initColorSection() {
+    mapping = api.getColorSemantics();
     renderColorRows();
-    $("za-colors-reset").addEventListener("command", () => {
+    $("za-colors-reset").addEventListener("click", () => {
       mapping = api.resetColorSemantics();
       renderColorRows();
     });
@@ -292,11 +330,11 @@
       );
     }
 
-    rebuildButton.addEventListener("command", () => {
+    rebuildButton.addEventListener("click", () => {
       api.rebuildIndex();
       refresh();
     });
-    cancelButton.addEventListener("command", () => {
+    cancelButton.addEventListener("click", () => {
       api.cancelIndexRebuild();
       refresh();
     });
@@ -306,7 +344,9 @@
     window.addEventListener("unload", () => clearInterval(interval));
   }
 
-  initProviderSection();
-  initColorSection();
-  initIndexSection();
+  ensureReady(() => {
+    initProviderSection();
+    initColorSection();
+    initIndexSection();
+  });
 })();

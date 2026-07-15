@@ -27,7 +27,7 @@ import {
 } from "./zotero/adapter";
 import { createZoteroCredentialStore } from "./zotero/credentials";
 import { createPluginFileStore } from "./zotero/files";
-import { resolveFetch } from "./zotero/http";
+import { resolveAbortController, resolveFetch } from "./zotero/http";
 import { createModelCache } from "./zotero/modelCache";
 import { registerItemChangeObserver } from "./zotero/notifier";
 import { zoteroPrefStore } from "./zotero/prefs";
@@ -107,6 +107,7 @@ export class ZoteroAgentPlugin {
       credentials: this.trackingCredentialStore(credentials),
       registry: createDefaultRegistry(),
       fetch: resolveFetch(),
+      createAbortController: resolveAbortController(),
       logger,
     };
 
@@ -337,14 +338,15 @@ export class ZoteroAgentPlugin {
       templateLabel: template.label,
       items,
     });
-    const started = workflows.startTemplate(
-      template.id,
-      items.map(({ libraryID, key }) => ({ libraryID, key })),
-    );
-    if (!started.ok) {
-      this.log(`workflow not started: ${started.message}`);
-    }
-    this.openResultView(window);
+    void this.openResultView(window).then(() => {
+      const started = workflows.startTemplate(
+        template.id,
+        items.map(({ libraryID, key }) => ({ libraryID, key })),
+      );
+      if (!started.ok) {
+        this.log(`workflow not started: ${started.message}`);
+      }
+    });
   }
 
   /** Start a named scholarly workflow (S4-01..S4-05): set the session so the
@@ -359,14 +361,15 @@ export class ZoteroAgentPlugin {
     const items = getSelectedItemRefs(window);
     if (items.length === 0) return;
     workflows.setSession({ mode, title, items });
-    const started = workflows.startWorkflow(
-      mode,
-      items.map(({ libraryID, key }) => ({ libraryID, key })),
-    );
-    if (!started.ok) {
-      this.log(`workflow not started: ${started.message}`);
-    }
-    this.openResultView(window);
+    void this.openResultView(window).then(() => {
+      const started = workflows.startWorkflow(
+        mode,
+        items.map(({ libraryID, key }) => ({ libraryID, key })),
+      );
+      if (!started.ok) {
+        this.log(`workflow not started: ${started.message}`);
+      }
+    });
   }
 
   private startFreePromptWorkflow(window: _ZoteroTypes.MainWindow): void {
@@ -376,23 +379,46 @@ export class ZoteroAgentPlugin {
     if (items.length === 0) return;
     // The run starts from inside the view once the user entered a prompt.
     workflows.setSession({ mode: "free-prompt", items });
-    this.openResultView(window);
+    void this.openResultView(window);
   }
 
-  /** Open (or focus) the single result-view window (FR-091, FR-098). */
-  private openResultView(window: _ZoteroTypes.MainWindow): void {
-    if (!this.info) return;
+  /** Open (or focus) the single result-view window (FR-091, FR-098). Resolves
+   * once the view has subscribed to workflow events — starting a workflow
+   * before that would fire "started"/"completed" into a window that isn't
+   * listening yet, leaving the modal empty (S2-05 regression). Reusing an
+   * already-open window resolves immediately since it subscribed long ago. */
+  private openResultView(window: _ZoteroTypes.MainWindow): Promise<void> {
+    if (!this.info) return Promise.resolve();
     if (this.resultWindow && !this.resultWindow.closed) {
       this.resultWindow.focus();
       // Tell the open view to pick up the new session.
       this.resultWindow.dispatchEvent(new Event("zotero-agent-session-changed"));
-      return;
+      return Promise.resolve();
     }
-    this.resultWindow = window.openDialog(
+    const win = window.openDialog(
       this.info.rootURI + "content/resultView.xhtml",
       RESULT_WINDOW_NAME,
       "chrome,dialog=no,resizable,centerscreen,width=780,height=620",
     );
+    this.resultWindow = win;
+    if (!win) return Promise.resolve();
+    return new Promise((resolve) => {
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        win.removeEventListener("zotero-agent-view-ready", onReady);
+        resolve();
+      };
+      const onReady = () => settle();
+      win.addEventListener("zotero-agent-view-ready", onReady);
+      // Defensive fallback: never block a workflow start indefinitely if the
+      // view's script fails to load or the ready event is somehow missed.
+      win.setTimeout(() => {
+        if (!settled) this.log("result view ready-event timed out; starting anyway");
+        settle();
+      }, 5000);
+    });
   }
 
   addToAllWindows(): void {

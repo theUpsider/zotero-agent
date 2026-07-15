@@ -114,8 +114,10 @@ export function createLogger(
   return {
     log: write,
     error: (message, error) => {
-      const detail =
-        error instanceof Error ? `${message}: ${error.message}` : message;
+      let detail = error instanceof Error ? `${message}: ${error.message}` : message;
+      if (error instanceof Error && error.cause instanceof Error) {
+        detail += ` (cause: ${error.cause.message})`;
+      }
       write(detail);
     },
   };

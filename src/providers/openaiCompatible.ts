@@ -230,7 +230,7 @@ export class OpenAICompatibleProvider implements AIProvider {
 
   /** fetch with timeout; network failures and aborts become typed errors. */
   private async send(url: string, init: RequestInit, callerSignal?: AbortSignal): Promise<Response> {
-    const controller = new AbortController();
+    const controller = (this.deps.createAbortController ?? (() => new AbortController()))();
     const timer = setTimeout(() => controller.abort(), this.settings.timeoutMs);
     const onCallerAbort = () => controller.abort();
     callerSignal?.addEventListener("abort", onCallerAbort, { once: true });

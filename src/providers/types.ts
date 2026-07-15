@@ -61,4 +61,7 @@ export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 export interface ProviderDeps {
   fetch: FetchLike;
   logger: Logger;
+  /** Defaults to the global AbortController; runtime overrides this when the
+   * host scope has none (resolved in src/zotero/http.ts). */
+  createAbortController?: () => AbortController;
 }
