@@ -123,6 +123,7 @@ export class ZoteroAgentPlugin {
       highlightWriter: createHighlightWriter(logger),
       prefs,
       logger,
+      createAbortController: resolveAbortController(),
       ...(indexManager
         ? {
             retrieval: {

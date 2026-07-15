@@ -108,6 +108,9 @@ export interface OrchestratorDeps {
   prefs: PrefStore;
   logger: Logger;
   retrieval?: OrchestratorRetrievalDeps;
+  /** Defaults to the global AbortController; the plugin overrides this when
+   * the host scope has none (resolved in src/zotero/http.ts). */
+  createAbortController?: () => AbortController;
 }
 
 const WORKFLOW_ID_BY_KIND: Record<WorkflowRunRequest["kind"], WorkflowId> = {
@@ -549,7 +552,7 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         throw new AgentError("invalid-config", "A workflow is already running.");
       }
       running = true;
-      controller = new AbortController();
+      controller = (deps.createAbortController ?? (() => new AbortController()))();
       try {
         await execute(request, controller.signal);
       } finally {

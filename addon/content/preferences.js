@@ -67,7 +67,10 @@
     }
     // Re-apply the pref-bound value now that the popup has items.
     if (menulist.getAttribute("preference")) {
-      const current = Zotero.Prefs.get("extensions.zotero-agent.provider.active", true);
+      const current = Zotero.Prefs.get(
+        "extensions.zotero-agent.provider.active",
+        true,
+      );
       if (current) menulist.value = current;
     }
 
@@ -82,7 +85,8 @@
     if (!hasKey) {
       note.textContent = "No API key saved.";
     } else if (secure) {
-      note.textContent = "The key is stored securely in Zotero's password storage.";
+      note.textContent =
+        "The key is stored securely in Zotero's password storage.";
     } else {
       note.textContent =
         "The key is stored in Zotero's preferences file on this computer.";
@@ -127,7 +131,9 @@
       try {
         const outcome = await api.testConnection();
         result.textContent = outcome.message;
-        result.className = outcome.ok ? "za-status za-ok" : "za-status za-error";
+        result.className = outcome.ok
+          ? "za-status za-ok"
+          : "za-status za-error";
       } finally {
         button.disabled = false;
       }
@@ -187,7 +193,10 @@
     label.textContent = category;
     label.title = "Double-click to rename";
     label.addEventListener("dblclick", () => {
-      const input = doc.createElementNS("http://www.w3.org/1999/xhtml", "input");
+      const input = doc.createElementNS(
+        "http://www.w3.org/1999/xhtml",
+        "input",
+      );
       input.type = "text";
       input.value = category;
       input.className = "za-chip-edit";
@@ -202,7 +211,10 @@
       });
     });
 
-    const remove = doc.createElementNS("http://www.w3.org/1999/xhtml", "button");
+    const remove = doc.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "button",
+    );
     remove.textContent = "×";
     remove.className = "za-chip-remove";
     remove.title = "Remove this meaning";
@@ -314,7 +326,8 @@
         ? `Last updated: ${new Date(s.lastUpdated).toLocaleString()}`
         : "Not built yet.";
       status.textContent = formatIndexState(s);
-      status.className = s.state === "needs-rebuild" ? "za-status za-error" : "za-status";
+      status.className =
+        s.state === "needs-rebuild" ? "za-status za-error" : "za-status";
 
       const rebuilding = s.state === "rebuilding";
       progress.hidden = !rebuilding;
@@ -326,7 +339,9 @@
       rebuildButton.disabled = rebuilding;
       rebuildButton.setAttribute(
         "label",
-        s.state === "needs-rebuild" ? "Rebuild index (needed)" : "Rebuild index",
+        s.state === "needs-rebuild"
+          ? "Rebuild index (needed)"
+          : "Rebuild index",
       );
     }
 
