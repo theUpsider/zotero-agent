@@ -4,3 +4,4 @@ build/
 .env
 *.log
 .tokensave
+.claude/.headroom_wrap_marker.json
