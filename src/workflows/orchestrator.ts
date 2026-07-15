@@ -42,6 +42,7 @@ import type {
   ItemContextReader,
   ItemRef,
   NoteWriter,
+  PdfPageText,
   TagWriter,
 } from "../zotero/types";
 import { parseHighlightSuggestions, planHighlights } from "./highlights";
@@ -222,6 +223,41 @@ function truncationNotice(composed: ComposedContext): string | undefined {
   );
 }
 
+/** Complete, bounded PDF text windows for verbatim highlighting. Pages are
+ * packed while they fit; oversized pages use overlapping windows so a short
+ * passage crossing a window edge remains visible in the next call. This path
+ * deliberately does not depend on retrieval/index state. */
+function highlightTextChunks(pages: PdfPageText[], requestedBudget: number): string[] {
+  const budget = Math.max(2_000, requestedBudget);
+  const chunks: string[] = [];
+  let packed = "";
+  const flush = () => {
+    if (packed) chunks.push(packed);
+    packed = "";
+  };
+
+  for (const page of pages) {
+    const header = `[PDF page ${page.pageLabel || page.pageIndex + 1}]\n`;
+    const block = `${header}${page.text}`;
+    if (block.length <= budget) {
+      if (packed && packed.length + 2 + block.length > budget) flush();
+      packed += `${packed ? "\n\n" : ""}${block}`;
+      continue;
+    }
+
+    flush();
+    const contentBudget = Math.max(1_000, budget - header.length);
+    const overlap = Math.min(500, Math.floor(contentBudget / 4));
+    const step = Math.max(1, contentBudget - overlap);
+    for (let start = 0; start < page.text.length; start += step) {
+      chunks.push(`${header}${page.text.slice(start, start + contentBudget)}`);
+      if (start + contentBudget >= page.text.length) break;
+    }
+  }
+  flush();
+  return chunks;
+}
+
 /** Queries the retrieval backend for items whose PDF text exceeds the token
  * budget, one query per over-budget item so passage allocation stays fair
  * across a multi-item selection (S3-05). Items with no PDF text, or that
@@ -378,6 +414,7 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
     colorSemantics: ColorSemantics,
     categories: Category[],
     highlightWriter: HighlightWriter,
+    chunkCharBudget: number,
   ): Promise<WorkflowResultSection[]> => {
     for (const [index, item] of composed.items.entries()) {
       signal.throwIfAborted();
@@ -387,29 +424,42 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         markdown = "This item has no readable PDF text, so nothing was highlighted.";
       } else {
         const suggestions = [];
+        const textChunks = highlightTextChunks(targets.pages, chunkCharBudget);
+        const totalPasses = Math.max(1, categories.length * textChunks.length);
         for (const [categoryIndex, category] of categories.entries()) {
-          signal.throwIfAborted();
-          emit({
-            type: "progress",
-            message: `Highlighting "${item.title || item.ref.key}": ${category}…`,
-            fraction:
-              (index + categoryIndex / Math.max(1, categories.length)) /
-              composed.items.length,
-          });
-          const reply = await complete(
-            provider,
-            composeHighlightPrompt(item.contextText, [category]),
-            signal,
-          );
-          suggestions.push(
-            ...parseHighlightSuggestions(reply).map((suggestion) => ({
-              category,
-              quote: suggestion.quote,
-            })),
-          );
+          for (const [chunkIndex, textChunk] of textChunks.entries()) {
+            signal.throwIfAborted();
+            const pass = categoryIndex * textChunks.length + chunkIndex;
+            emit({
+              type: "progress",
+              message:
+                `Highlighting "${item.title || item.ref.key}": ${category}` +
+                `${textChunks.length > 1 ? ` (${chunkIndex + 1}/${textChunks.length})` : ""}…`,
+              fraction: (index + pass / totalPasses) / composed.items.length,
+            });
+            const reply = await complete(
+              provider,
+              composeHighlightPrompt(textChunk, [category]),
+              signal,
+            );
+            suggestions.push(
+              ...parseHighlightSuggestions(reply).map((suggestion) => ({
+                category,
+                quote: suggestion.quote,
+              })),
+            );
+          }
         }
+        const uniqueSuggestions = suggestions.filter(
+          (suggestion, position, all) =>
+            all.findIndex(
+              (candidate) =>
+                candidate.category.toLowerCase() === suggestion.category.toLowerCase() &&
+                candidate.quote === suggestion.quote,
+            ) === position,
+        );
         const { planned, unresolved } = planHighlights(
-          suggestions,
+          uniqueSuggestions,
           targets.pages,
           colorSemantics,
           [
@@ -437,7 +487,7 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         ref: item.ref,
         title: item.title,
         markdown,
-        truncated: item.truncation !== undefined,
+        truncated: false,
       };
       sections.push(section);
       emit({ type: "item-completed", section });
@@ -521,12 +571,13 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         );
       }
 
+      const contextCharBudget = getIntPref(
+        deps.prefs,
+        PREF_KEYS.contextCharBudget,
+        PREF_DEFAULTS[PREF_KEYS.contextCharBudget] as number,
+      );
       const composed = composeItemContexts(contexts, colorSemantics, {
-        pdfTextCharBudgetPerItem: getIntPref(
-          deps.prefs,
-          PREF_KEYS.contextCharBudget,
-          PREF_DEFAULTS[PREF_KEYS.contextCharBudget] as number,
-        ),
+        pdfTextCharBudgetPerItem: contextCharBudget,
         tokenBudgetPerItem,
         ...(retrievedByItem ? { retrievedByItem } : {}),
       });
@@ -543,6 +594,7 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
           colorSemantics,
           categories,
           deps.highlightWriter as HighlightWriter,
+          contextCharBudget,
         );
       } else {
         sections = await runPerItem(
@@ -555,7 +607,7 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         );
       }
 
-      const notice = truncationNotice(composed);
+      const notice = request.kind === "auto-highlight" ? undefined : truncationNotice(composed);
       const content =
         request.kind === "free-prompt"
           ? (sections[0]?.markdown ?? "")

@@ -61,6 +61,11 @@ provides character rectangles needed to anchor real highlights. If geometry is
 temporarily unavailable, the plugin preserves a page-note fallback and retries
 it automatically during a later run with the PDF open.
 
+Auto-highlighting reads the complete PDF in bounded, overlapping page-text
+chunks. It intentionally does not depend on the local retrieval index: an
+"180 items indexed" count neither enables nor limits highlighting coverage.
+Indexing remains active for analysis, templates, and free-prompt retrieval.
+
 ## Releasing (S5-05)
 
 The version is single-sourced from `package.json` and stamped into `manifest.json`

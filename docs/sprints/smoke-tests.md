@@ -206,7 +206,7 @@ no jargon, no API key fragments.
 
 ## Sprint 5 — auto-highlighting, offline, release
 
-### 19. Auto-highlight a paper (S5-01/S5-02/S5-09; FR-004, FR-041..FR-048, FR-102..FR-105, EIR-005, OP-009)
+### 19. Auto-highlight a paper (S5-01/S5-02/S5-09; FR-004, FR-041..FR-048, FR-102..FR-107, EIR-005, OP-009)
 
 1. Open the target PDF in Zotero's reader, then select its parent item with
    few/no existing highlights. Item menu (or
@@ -230,6 +230,10 @@ no jargon, no API key fragments.
    PDF reader and rerun. **Expected:** the existing zero-position plugin note is
    detected, replaced by a real highlight, and removed only after replacement
    succeeds. No second fallback note is created (FR-103..105).
+7. Use a PDF longer than the configured context character budget and place a
+   known passage near the end. **Expected:** the passage can be suggested from
+   a later page chunk; result has no "not indexed", "truncated text", or
+   "index updated in background" notice (FR-106/107), regardless of index count.
 
 ### 20. Highlight duplicate prevention (S5-03; FR-046, NFR-020)
 

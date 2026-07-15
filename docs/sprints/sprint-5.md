@@ -10,7 +10,7 @@ duplicates on re-run. Then: disconnect network → local workflows (index query,
 viewing, local model) still work; external provider fails with a clear message. Install
 release `.xpi` from scratch.
 
-**Requirements covered:** FR-004, FR-041…FR-048, FR-102…FR-105, EIR-005, NFR-020 (highlights part),
+**Requirements covered:** FR-004, FR-041…FR-048, FR-102…FR-107, EIR-005, NFR-020 (highlights part),
 NFR-028…NFR-032, NFR-023, FR-022, ASM-007, OP-009. Stretch: FR-014/FR-015 per S1-08 outcome.
 
 **Precondition:** S2-08 spike confirmed highlight writes are feasible (otherwise this sprint
@@ -23,7 +23,9 @@ re-plans: highlight suggestions rendered as a note with page references instead)
 ### S5-01 · Passage identification for categories · **Must** · L
 **Refs:** FR-041, FR-042, FR-043, FR-045
 Workflow step: one AI pass per configured category identifies all relevant passages and
-returns exact quotes; replies are merged and the resolver maps quotes to PDF text positions.
+per bounded, overlapping page-text chunk returns exact quotes; replies are merged and the
+resolver maps quotes to PDF text positions. Auto-highlight is independent of retrieval-index
+membership and covers the complete PDF without a truncation/index warning (FR-106/107).
 Most-relevant color is retained when passages overlap (FR-045, FR-102).
 
 **Acceptance criteria**
@@ -31,6 +33,8 @@ Most-relevant color is retained when passages overlap (FR-045, FR-102).
 - [x] Passage→position resolver unit-tested against extracted page text fixtures (pure module). — `workflows/highlights.ts` `planHighlights`/`locate`; `tests/highlights.test.ts`.
 - [x] Multi-category passage gets exactly one color: the most relevant category's (FR-045); tie-breaking rule documented. — suggestions processed most-relevant-first; overlapping later passage dropped as duplicate. Rule documented on `planHighlights`; tested ("keeps the most-relevant (first) category when passages overlap").
 - [x] Unresolvable passages (quote not found in PDF text) are reported in the result view, not silently dropped. — `unresolved` (`not-found`/`no-color`) surfaced by `summarizeHighlightRun`; tested in `highlights.test.ts` + `highlightSummary.test.ts`.
+- [x] Long otherwise-verbatim quotes tolerate dash loss/addition caused by PDF line wrapping (`state-of-the-\nart`, `X-toEnglish`) while short quotes remain strict. — conservative long-quote fallback in `locate`; regression-tested.
+- [x] Every PDF page reaches the provider through bounded overlapping chunks; no retrieval query, missing-index claim, or truncation notice is emitted for auto-highlight. — orchestrator regression test covers evidence after the former 20k boundary.
 
 ### S5-02 · Highlight creation in Zotero · **Must** · L
 **Refs:** FR-004, FR-044, FR-047, FR-048, EIR-005, MVP-004, OP-009
@@ -127,7 +131,7 @@ colors for manual highlighting. FR-004 then needs a documented requirement devia
 - [~] Full demo script passes on a clean profile with a real library. — code paths complete; the live run is the pending manual step (smoke 19–22).
 - [x] MVP traceability pass complete (`mvp-acceptance.md`), all Must-items across sprints closed or consciously descoped with rationale.
 - [x] Release published: tagged, `.xpi` + `update.json`, README current. — build emits both artifacts; README "Releasing (S5-05)". Tagging/upload is the manual publish step.
-- [x] `npm test`, `npm run typecheck` green; smoke-test suite documented and executed. — 251 unit tests + typecheck green; smoke suite documented (execution is the manual live pass).
+- [x] `npm test`, `npm run typecheck` green; smoke-test suite documented and executed. — 252 unit tests + typecheck green; smoke suite documented (execution is the manual live pass).
 
 ---
 

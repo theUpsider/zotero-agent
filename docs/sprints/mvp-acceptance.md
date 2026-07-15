@@ -14,7 +14,7 @@ reader behavior, persistence, and sync.
 | MVP-001 | Configure AI providers | `providers/`, `ui/settingsApi.ts`, `core/config.ts` | smoke 2–5 | 🔎 |
 | MVP-002 | Configure color→category semantics | `core/colorSemantics.ts`, settings pane | smoke 6; `colorSemantics.test.ts` | ✅🔎 |
 | MVP-003 | Analyze selected papers | orchestrator `analyze-papers`, `prompts/scholarly.ts` | smoke 9; `orchestrator.test.ts` | ✅🔎 |
-| MVP-004 | Auto-create colored highlights | per-category orchestrator passes, `workflows/highlights.ts`, adapter geometry + fallback repair | smoke 19–20; `highlights.test.ts`, `zoteroAdapter.test.ts`, `highlightSummary.test.ts` | ✅🔎 |
+| MVP-004 | Auto-create colored highlights | per-category/full-PDF chunk passes, safe quote normalization, adapter geometry + fallback repair | smoke 19–20; `orchestrator.test.ts`, `highlights.test.ts`, `zoteroAdapter.test.ts` | ✅🔎 |
 | MVP-005 | Generate notes from annotations | orchestrator `generate-notes` | smoke 11; `orchestrator.test.ts` | ✅🔎 |
 | MVP-006 | Summarize notes & annotations | orchestrator `summarize-notes` | smoke 12 | ✅🔎 |
 | MVP-007 | Analyze/suggest/create tags | orchestrator `suggest-tags`, `core/tags.ts`, adapter `createTagWriter` | smoke 13; `tags.test.ts` | ✅🔎 |

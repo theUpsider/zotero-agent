@@ -65,6 +65,8 @@ dimension (5 best):
    relevant color (FR-044/FR-045).
 3. **Coverage** — the notable passages a researcher would highlight are found,
    without flooding the page with low-value highlights (precision over recall).
+   Include evidence beyond the first context-budget window; auto-highlight
+   page chunks must cover the complete PDF independently of index state.
 4. **Non-duplication** — a re-run and existing user highlights produce no
    overlapping duplicates (FR-046); verified via smoke test 20.
 5. **Anchor integrity and repair** — real highlights have nonzero per-line

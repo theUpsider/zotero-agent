@@ -126,7 +126,7 @@ interface Normalized {
   map: number[];
 }
 
-function normalize(original: string): Normalized {
+function normalize(original: string, ignoreHyphens = false): Normalized {
   const out: string[] = [];
   const map: number[] = [];
   let prevWasSpace = false;
@@ -143,6 +143,7 @@ function normalize(original: string): Normalized {
       i = j - 1;
       continue;
     }
+    if (ignoreHyphens && canonicalPunctuation === "-") continue;
     if (/\s/.test(ch)) {
       if (prevWasSpace || out.length === 0) continue;
       out.push(" ");
@@ -181,14 +182,19 @@ interface Location {
  * offset) match, or null. Whitespace/ligature/hyphenation differences are
  * absorbed by normalization (see {@link normalize}); the quote must otherwise
  * appear verbatim, which is what the prompt instructs. */
-function locate(pages: NormalizedPage[], quote: string): Location | null {
-  const needle = normalize(quote).text;
+function locateWithNormalization(
+  pages: NormalizedPage[],
+  quote: string,
+  ignoreHyphens: boolean,
+): Location | null {
+  const needle = normalize(quote, ignoreHyphens).text;
   if (needle.length === 0) return null;
   for (const page of pages) {
-    const at = page.normalized.text.indexOf(needle);
+    const normalizedPage = ignoreHyphens ? normalize(page.text, true) : page.normalized;
+    const at = normalizedPage.text.indexOf(needle);
     if (at === -1) continue;
-    const origStart = page.normalized.map[at];
-    const origEnd = page.normalized.map[at + needle.length];
+    const origStart = normalizedPage.map[at];
+    const origEnd = normalizedPage.map[at + needle.length];
     return {
       pageIndex: page.pageIndex,
       pageLabel: page.pageLabel,
@@ -198,6 +204,16 @@ function locate(pages: NormalizedPage[], quote: string): Location | null {
     };
   }
   return null;
+}
+
+function locate(pages: NormalizedPage[], quote: string): Location | null {
+  const strict = locateWithNormalization(pages, quote, false);
+  if (strict) return strict;
+  // Long quotes remain highly discriminative even after ignoring hyphens.
+  // This repairs PDF line-wrap/model drift such as "X-to-\nEnglish" vs
+  // "X-toEnglish" without making short phrase matching dangerously broad.
+  if (normalize(quote).text.replace(/\s/g, "").length < 40) return null;
+  return locateWithNormalization(pages, quote, true);
 }
 
 interface NormalizedPage {

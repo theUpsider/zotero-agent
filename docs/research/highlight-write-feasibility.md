@@ -52,11 +52,13 @@ Creating the annotation is trivial *once we have `rects`*. Getting rects for
   document via `getPageData({ pageIndex }).chars`. If no reader is open, the
   page-note fallback is retained and automatically retried on a later run.
 - Strategy for Sprint 5:
-  1. Extract page text via `PDFWorker`; read character rectangles from the open reader.
-  2. Normalize whitespace, fuzzy-find the model-quoted span in the page text
+  1. Extract complete page text via `PDFWorker`; pack it into bounded,
+     overlapping provider chunks independent of the retrieval index.
+  2. Read character rectangles from the open reader.
+  3. Normalize whitespace, fuzzy-find the model-quoted span in the page text
      (the model must be prompted to quote verbatim).
-  3. Union the reader character rects of the matched span into line rects → `position.rects`.
-  4. Compute `sortIndex` from pageIndex + match offset + top coordinate.
+  4. Union the reader character rects of the matched span into line rects → `position.rects`.
+  5. Compute `sortIndex` from pageIndex + match offset + top coordinate.
 - Fallback when reader geometry is unavailable: preserve one **zero-position
   page-note annotation** containing `[category] text`. On a later run, detect
   it as repairable, reserve its span against duplicates, retry anchoring, save

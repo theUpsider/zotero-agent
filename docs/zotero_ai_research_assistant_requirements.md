@@ -275,6 +275,8 @@ Das System ist eine Erweiterung innerhalb von Zotero. Es nutzt Zotero-Dokumente,
 | FR-103 | Detailed | The system shall detect plugin-created highlight fallbacks with invalid or missing text geometry and retry them as positioned highlights when usable PDF reader geometry becomes available. |
 | FR-104 | Detailed | The system shall remove a broken fallback annotation only after its replacement highlight has been saved successfully. |
 | FR-105 | Detailed | The system shall preserve a fallback annotation when repair geometry is unavailable or replacement creation fails. |
+| FR-106 | Detailed | The system shall cover the complete PDF during auto-highlighting by processing bounded overlapping page-text chunks without depending on retrieval-index membership. |
+| FR-107 | Detailed | The system shall not report auto-highlight text chunking as a missing-index or background-indexing condition. |
 
 ### 7.5 Notizgenerierung und Notizzusammenfassung
 
@@ -695,7 +697,7 @@ Das System ist eine Erweiterung innerhalb von Zotero. Es nutzt Zotero-Dokumente,
 | Ziel | Abgedeckt durch Anforderungen |
 |---|---|
 | Bessere Auffindbarkeit von Annotationen | FR-003, FR-005, FR-006, FR-008, FR-091 |
-| Automatische Markierungen | FR-004, FR-041 bis FR-048, FR-102 bis FR-105 |
+| Automatische Markierungen | FR-004, FR-041 bis FR-048, FR-102 bis FR-107 |
 | Farbsemantik | FR-002, FR-023 bis FR-031 |
 | Notizen aus Markierungen | FR-005, FR-049 bis FR-056 |
 | Tags | FR-007, FR-057 bis FR-064 |

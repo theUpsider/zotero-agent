@@ -84,8 +84,10 @@ sequenceDiagram
     participant A as Adapter (write)
     participant V as Result View
 
-    loop each configured category (FR-102)
-        O->>P: identify all relevant passages for one category
+    O->>A: read complete PDF page text
+    O->>O: pack pages into bounded overlapping chunks (FR-106)
+    loop each configured category × text chunk (FR-102/106)
+        O->>P: identify relevant passages for one category in this chunk
         P-->>O: exact quotes
     end
     O->>Res: resolve quotes → PDF positions (fuzzy match)
@@ -111,6 +113,11 @@ comes from an already-open Zotero PDF reader (`getPageData().chars`). When no
 reader geometry is available, the adapter retains one zero-position page-note
 fallback. A later run detects it, reserves its span against duplicates, retries
 anchoring, and deletes the note only after a valid replacement is saved.
+
+Auto-highlight never uses retrieval passages: exact quoting needs contiguous
+source text, and page chunks cover the full PDF deterministically. Therefore
+its result never inherits the generic "not indexed / truncated text" notice.
+Retrieval-index state continues to govern analysis/template/free-prompt context.
 
 ## 4. Scenario: background index update (no user, no network)
 

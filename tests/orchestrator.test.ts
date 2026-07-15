@@ -682,7 +682,7 @@ describe("auto-highlight workflow (S5-02)", () => {
     expect(failed.message).toContain("Highlighting is unavailable");
   });
 
-  it("never substitutes retrieved passages for full text, even over budget (verbatim quoting needs the real text)", async () => {
+  it("chunks complete PDF text without retrieval or a false indexing/truncation notice", async () => {
     const backend = fakeBackend(async () => [
       {
         chunk: { itemKey: "AAA", source: "pdf-text", text: "an unrelated snippet", chunkId: "AAA:pdf-text:0" },
@@ -695,13 +695,13 @@ describe("auto-highlight workflow (S5-02)", () => {
       pdfText: "word ".repeat(10000) + "the smoking gun sentence",
       pdfTextSource: "pdf-worker",
     });
-    const highlightWriter = fakeHighlightWriter();
+    const highlightWriter = fakeHighlightWriter(bigItem.pdfText);
     const prompts: string[] = [];
     const provider = fakeProvider(async (request) => {
       prompts.push(request.messages[0]!.content);
       return { text: reply };
     });
-    const { orchestrator } = setup({
+    const { orchestrator, events } = setup({
       provider,
       contexts: [bigItem],
       highlightWriter,
@@ -711,6 +711,10 @@ describe("auto-highlight workflow (S5-02)", () => {
 
     expect(backend.query).not.toHaveBeenCalled();
     expect(prompts[0]).not.toContain("an unrelated snippet");
+    expect(prompts.some((prompt) => prompt.includes("the smoking gun sentence"))).toBe(true);
+    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(completed.result.truncationNotice).toBeUndefined();
+    expect(completed.result.sections[0]?.truncated).toBe(false);
   });
 
   it("reports items whose PDF text cannot be read", async () => {

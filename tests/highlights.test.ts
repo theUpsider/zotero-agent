@@ -146,6 +146,29 @@ describe("planHighlights", () => {
     expect(planned[0]?.text).toBe(pages[0]?.text);
   });
 
+  it("tolerates PDF line-hyphen drift in long otherwise-verbatim quotes", () => {
+    const pages: PdfPageText[] = [
+      {
+        pageIndex: 0,
+        pageLabel: "1",
+        text: "Hibiki-Zero achieves state-of-the-\nart performance in translation accuracy, latency, voice transfer, and naturalness across five X-to-\nEnglish tasks.",
+      },
+    ];
+    for (const quote of [
+      "Hibiki-Zero achieves state-of-theart performance in translation accuracy, latency, voice transfer, and naturalness across five X-to-English tasks.",
+      "Hibiki-Zero achieves state-of- theart performance in translation accuracy, latency, voice transfer, and naturalness across five X-toEnglish tasks.",
+    ]) {
+      const { planned, unresolved } = planHighlights(
+        [{ category: "results", quote }],
+        pages,
+        semantics,
+        [],
+      );
+      expect(unresolved).toEqual([]);
+      expect(planned).toHaveLength(1);
+    }
+  });
+
   it("reports quotes that cannot be located, never dropping them", () => {
     const { planned, unresolved } = planHighlights(
       [{ category: "results", quote: "this sentence is not in the paper" }],
