@@ -4,6 +4,7 @@ import {
   ZOTERO_ANNOTATION_COLORS,
   categoriesForColor,
   colorForCategory,
+  configuredCategories,
   defaultColorSemantics,
   parseColorSemantics,
   serializeColorSemantics,
@@ -56,6 +57,27 @@ describe("serialize/parse round-trip", () => {
       "#2ea8e5": "not-a-list",
     });
     expect(parseColorSemantics(raw)).toEqual({ "#ffd400": ["methodology"] });
+  });
+});
+
+describe("configuredCategories (S4-02)", () => {
+  it("returns all 7 defaults in canonical order for the default mapping (FR-039)", () => {
+    expect(configuredCategories(defaultColorSemantics())).toEqual([...DEFAULT_CATEGORIES]);
+  });
+
+  it("appends custom categories after the defaults (FR-038)", () => {
+    const mapping = defaultColorSemantics();
+    mapping[ZOTERO_ANNOTATION_COLORS.gray] = ["ethics", "reproducibility"];
+    const categories = configuredCategories(mapping);
+    expect(categories.slice(0, DEFAULT_CATEGORIES.length)).toEqual([...DEFAULT_CATEGORIES]);
+    expect(categories).toContain("ethics");
+    expect(categories).toContain("reproducibility");
+  });
+
+  it("de-duplicates custom categories case-insensitively", () => {
+    const mapping = { "#ffd400": ["Methodology", "Ethics"], "#ff6666": ["ethics"] };
+    const categories = configuredCategories(mapping);
+    expect(categories.filter((c) => c.toLowerCase() === "ethics")).toHaveLength(1);
   });
 });
 

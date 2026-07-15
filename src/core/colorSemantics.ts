@@ -73,6 +73,27 @@ export function parseColorSemantics(raw: string): ColorSemantics {
   }
 }
 
+/** The scholarly categories the user works with (S4-02; FR-038, BR-006): the
+ * required defaults followed by any custom categories introduced through the
+ * color mapping, de-duplicated case-insensitively. Defaults keep their
+ * canonical order so analysis output is stable and the 7 required categories
+ * always appear (FR-039). */
+export function configuredCategories(mapping: ColorSemantics): Category[] {
+  const result: Category[] = [...DEFAULT_CATEGORIES];
+  const seen = new Set(result.map((c) => c.toLowerCase()));
+  for (const categories of Object.values(mapping)) {
+    for (const category of categories) {
+      const label = category.trim();
+      const key = label.toLowerCase();
+      if (label && !seen.has(key)) {
+        seen.add(key);
+        result.push(label);
+      }
+    }
+  }
+  return result;
+}
+
 /** Categories mapped to a color; unknown colors yield an empty list. */
 export function categoriesForColor(mapping: ColorSemantics, color: ColorHex): Category[] {
   return mapping[color.toLowerCase()] ?? [];

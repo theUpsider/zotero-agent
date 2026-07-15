@@ -59,6 +59,14 @@ export interface NoteWriter {
   createChildNote(ref: ItemRef, html: string): Promise<{ noteKey: string }>;
 }
 
+/** Write seam for subject tags (S4-05). Adds tags to an item, skipping
+ * case-insensitive duplicates (FR-064); returns the tags actually added so
+ * the result view can report them. Never touches collections or item
+ * locations (EIR-006, NFR-022, BR-007). */
+export interface TagWriter {
+  addTags(ref: ItemRef, tags: string[]): Promise<{ added: string[] }>;
+}
+
 /** Plugin-data-directory file access, injected into retrieval/ so the index
  * can persist without retrieval/ touching the Zotero global directly (S3-01,
  * DAR-003/004). Names are flat filenames within the plugin's own subdirectory

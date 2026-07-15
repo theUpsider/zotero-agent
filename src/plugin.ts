@@ -16,10 +16,11 @@ import { createIndexManager, type IndexManager } from "./retrieval/indexManager"
 import { createOramaBackend } from "./retrieval/oramaBackend";
 import { defaultReranker } from "./retrieval/rerank";
 import { createSettingsApi, type SettingsApi } from "./ui/settingsApi";
-import { createWorkflowUiApi, type WorkflowUiApi } from "./ui/workflowApi";
+import { createWorkflowUiApi, type NamedWorkflowMode, type WorkflowUiApi } from "./ui/workflowApi";
 import {
   createItemContextReader,
   createNoteWriter,
+  createTagWriter,
   getSelectedItemRefs,
   listAllItemRefs,
 } from "./zotero/adapter";
@@ -45,6 +46,14 @@ interface PluginInfo {
 interface DevApi {
   probeRetrieval(): Promise<ProbeReport>;
 }
+
+/** Named scholarly workflows in menu order (S4-07). */
+const NAMED_WORKFLOWS: { mode: NamedWorkflowMode; label: string }[] = [
+  { mode: "analyze-papers", label: "Analyze papers" },
+  { mode: "generate-notes", label: "Generate note from annotations" },
+  { mode: "summarize-notes", label: "Summarize notes" },
+  { mode: "suggest-tags", label: "Suggest tags" },
+];
 
 const TOOLS_MENU_ID = "zotero-agent-tools-menu";
 const ITEM_MENU_ID = "zotero-agent-item-menu";
@@ -107,6 +116,7 @@ export class ZoteroAgentPlugin {
       ensureProvider: () => ensureProviderReady(deps),
       reader,
       noteWriter: createNoteWriter(logger),
+      tagWriter: createTagWriter(logger),
       prefs,
       logger,
       ...(indexManager
@@ -278,6 +288,12 @@ export class ZoteroAgentPlugin {
       popup.appendChild(menuItem);
     };
 
+    // Scholarly workflows first, then the template prompts, then Free prompt
+    // (S4-07; task-language labels, no AI/RAG jargon, NFR-013).
+    for (const { mode, label } of NAMED_WORKFLOWS) {
+      addEntry(label, () => this.startNamedWorkflow(window, mode, label));
+    }
+    popup.appendChild(doc.createXULElement("menuseparator"));
     // listTemplateWorkflows() is pure/synchronous, so the menu is complete
     // even when addToWindow runs before initAsync has finished.
     for (const template of listTemplateWorkflows()) {
@@ -320,6 +336,28 @@ export class ZoteroAgentPlugin {
     });
     const started = workflows.startTemplate(
       template.id,
+      items.map(({ libraryID, key }) => ({ libraryID, key })),
+    );
+    if (!started.ok) {
+      this.log(`workflow not started: ${started.message}`);
+    }
+    this.openResultView(window);
+  }
+
+  /** Start a named scholarly workflow (S4-01..S4-05): set the session so the
+   * result view shows the right header, kick off the run, open the view. */
+  private startNamedWorkflow(
+    window: _ZoteroTypes.MainWindow,
+    mode: NamedWorkflowMode,
+    title: string,
+  ): void {
+    const workflows = this.workflows;
+    if (!workflows) return;
+    const items = getSelectedItemRefs(window);
+    if (items.length === 0) return;
+    workflows.setSession({ mode, title, items });
+    const started = workflows.startWorkflow(
+      mode,
       items.map(({ libraryID, key }) => ({ libraryID, key })),
     );
     if (!started.ok) {

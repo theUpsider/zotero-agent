@@ -15,12 +15,22 @@ import {
 import type { WorkflowResult } from "../workflows/types";
 import type { ItemRef } from "../zotero/types";
 
+/** The named scholarly workflows (S4-01..S4-05) — every mode except the two
+ * generic ones (template / free-prompt). */
+export type NamedWorkflowMode =
+  | "analyze-papers"
+  | "generate-notes"
+  | "summarize-notes"
+  | "suggest-tags";
+
 /** What the result view should show when it opens: which mode, which items.
  * Set by the menu handler right before opening the window. */
 export interface ResultViewSession {
-  mode: "template" | "free-prompt";
+  mode: "template" | "free-prompt" | NamedWorkflowMode;
   templateId?: string;
   templateLabel?: string;
+  /** Header label for a named workflow (S4-07). */
+  title?: string;
   items: (ItemRef & { title: string })[];
 }
 
@@ -31,6 +41,8 @@ export interface WorkflowUiApi {
   /** Fire-and-forget: outcome arrives via subscribe() events. */
   startTemplate(templateId: string, items: ItemRef[]): StartOutcome;
   startFreePrompt(prompt: string, items: ItemRef[]): StartOutcome;
+  /** Start one of the named scholarly workflows (S4-01..S4-05). */
+  startWorkflow(mode: NamedWorkflowMode, items: ItemRef[]): StartOutcome;
   cancel(): void;
   isRunning(): boolean;
   lastResult(): WorkflowResult | null;
@@ -66,6 +78,8 @@ export function createWorkflowUiApi(orchestrator: WorkflowOrchestrator): Workflo
       }
       return start({ kind: "free-prompt", prompt, items });
     },
+
+    startWorkflow: (mode, items) => start({ kind: mode, items }),
 
     cancel: () => orchestrator.cancel(),
 

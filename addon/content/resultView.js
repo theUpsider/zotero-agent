@@ -85,7 +85,7 @@
       $("za-run-title").textContent = "Free prompt";
       $("za-prompt-pane").hidden = false;
     } else if (session) {
-      $("za-run-title").textContent = session.templateLabel || "Analysis";
+      $("za-run-title").textContent = session.title || session.templateLabel || "Analysis";
       $("za-prompt-pane").hidden = true;
     }
     $("za-item-list").textContent = titles;
@@ -155,6 +155,10 @@
       runFreePrompt();
     } else if (session.templateId) {
       const outcome = api.startTemplate(session.templateId, currentItems());
+      if (!outcome.ok) setStatus(outcome.message);
+    } else {
+      /* Named scholarly workflow (Analyze papers, Suggest tags, …). */
+      const outcome = api.startWorkflow(session.mode, currentItems());
       if (!outcome.ok) setStatus(outcome.message);
     }
   }

@@ -10,8 +10,8 @@ import {
   type WorkflowEvent,
   type WorkflowOrchestrator,
 } from "../src/workflows/orchestrator";
-import type { ItemContext, ItemContextReader, ItemRef, NoteWriter } from "../src/zotero/types";
-import { itemContext, metadata } from "./fixtures/items";
+import type { ItemContext, ItemContextReader, ItemRef, NoteWriter, TagWriter } from "../src/zotero/types";
+import { annotation, itemContext, metadata } from "./fixtures/items";
 
 function fakePrefs(values: Record<string, unknown> = {}): PrefStore {
   const store = new Map(Object.entries(values));
@@ -46,6 +46,14 @@ function fakeNoteWriter(): NoteWriter & { createChildNote: ReturnType<typeof vi.
   };
 }
 
+/** Echoes the suggested tags back as "added"; deduplication against real
+ * existing tags is covered separately in tags.test.ts. */
+function fakeTagWriter(): TagWriter & { addTags: ReturnType<typeof vi.fn> } {
+  return {
+    addTags: vi.fn(async (_ref: ItemRef, tags: string[]) => ({ added: tags })),
+  };
+}
+
 const refs: ItemRef[] = [
   { libraryID: 1, key: "AAA" },
   { libraryID: 1, key: "BBB" },
@@ -77,21 +85,24 @@ function setup(overrides: {
   contexts?: ItemContext[];
   prefs?: Record<string, unknown>;
   retrieval?: OrchestratorRetrievalDeps;
+  tagWriter?: TagWriter;
 } = {}) {
   const provider = overrides.provider ?? fakeProvider();
   const reader = overrides.reader ?? fakeReader(overrides.contexts ?? twoItems);
   const noteWriter = fakeNoteWriter();
+  const tagWriter = overrides.tagWriter ?? fakeTagWriter();
   const orchestrator = createWorkflowOrchestrator({
     ensureProvider: overrides.ensureProvider ?? (async () => provider),
     reader,
     noteWriter,
+    tagWriter,
     prefs: fakePrefs(overrides.prefs),
     logger: noopLogger,
     ...(overrides.retrieval ? { retrieval: overrides.retrieval } : {}),
   });
   const events: WorkflowEvent[] = [];
   orchestrator.subscribe((event) => events.push(event));
-  return { orchestrator, events, provider, reader, noteWriter };
+  return { orchestrator, events, provider, reader, noteWriter, tagWriter };
 }
 
 const eventTypes = (events: WorkflowEvent[]) => events.map((e) => e.type);
@@ -392,5 +403,164 @@ describe("saveResultAsNotes", () => {
     const outcome = await orchestrator.saveResultAsNotes();
     expect(outcome).toEqual({ saved: [], failed: [] });
     expect(noteWriter.createChildNote).not.toHaveBeenCalled();
+  });
+});
+
+describe("analyze-papers workflow (S4-01/S4-02)", () => {
+  it("produces one structured section per item using the configured categories", async () => {
+    const prompts: string[] = [];
+    const provider = fakeProvider(async (request) => {
+      prompts.push(request.messages[0]!.content);
+      return { text: "## methodology\n\nDetails." };
+    });
+    const { orchestrator, events } = setup({ provider });
+    await orchestrator.run({ kind: "analyze-papers", items: refs });
+
+    expect(eventTypes(events)).toEqual([
+      "started",
+      "progress",
+      "progress",
+      "item-completed",
+      "progress",
+      "item-completed",
+      "completed",
+    ]);
+    // FR-039 (all 7 defaults listed) + FR-040 (no-evidence instruction, FR-038 not hardcoded).
+    expect(prompts[0]).toContain("- methodology");
+    expect(prompts[0]).toContain("- open points");
+    expect(prompts[0]).toContain("No relevant evidence found");
+    expect(prompts[0]).toContain("=== Item: Paper A (AAA) ===");
+    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(completed.result.workflowId).toBe("analyze-papers");
+    expect(completed.result.sections).toHaveLength(2);
+    expect(completed.result.content).toContain("## Paper A");
+  });
+});
+
+describe("generate-notes workflow (S4-03)", () => {
+  it("calls the model with the annotation-grouping prompt when annotations exist", async () => {
+    const prompts: string[] = [];
+    const provider = fakeProvider(async (request) => {
+      prompts.push(request.messages[0]!.content);
+      return { text: "## Methodology\n\n- a point" };
+    });
+    const annotated = itemContext({
+      ref: { libraryID: 1, key: "AAA" },
+      metadata: metadata({ key: "AAA", title: "Paper A" }),
+      annotations: [annotation({ text: "key claim" })],
+    });
+    const { orchestrator, events } = setup({ provider, contexts: [annotated] });
+    await orchestrator.run({ kind: "generate-notes", items: [{ libraryID: 1, key: "AAA" }] });
+
+    expect(prompts[0]).toContain("annotations and highlights");
+    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(completed.result.sections[0]?.markdown).toContain("a point");
+  });
+
+  it("skips the AI call with a clear message when the item has no annotations (S4-03 AC4)", async () => {
+    const bare = itemContext({
+      ref: { libraryID: 1, key: "AAA" },
+      metadata: metadata({ key: "AAA" }),
+      annotations: [],
+    });
+    const { orchestrator, events, provider } = setup({ contexts: [bare] });
+    await orchestrator.run({ kind: "generate-notes", items: [{ libraryID: 1, key: "AAA" }] });
+
+    expect(provider.complete).not.toHaveBeenCalled();
+    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(completed.result.sections[0]?.markdown).toContain("no annotations");
+  });
+});
+
+describe("summarize-notes workflow (S4-04)", () => {
+  it("skips items with neither notes nor annotations without calling the provider", async () => {
+    const bare = itemContext({
+      ref: { libraryID: 1, key: "AAA" },
+      metadata: metadata({ key: "AAA" }),
+      notes: [],
+      annotations: [],
+    });
+    const { orchestrator, events, provider } = setup({ contexts: [bare] });
+    await orchestrator.run({ kind: "summarize-notes", items: [{ libraryID: 1, key: "AAA" }] });
+
+    expect(provider.complete).not.toHaveBeenCalled();
+    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(completed.result.sections[0]?.markdown).toContain("no notes or annotations");
+  });
+});
+
+describe("suggest-tags workflow (S4-05)", () => {
+  const annotated = (key: string, title: string) =>
+    itemContext({
+      ref: { libraryID: 1, key },
+      metadata: metadata({ key, title }),
+      tags: ["reading-list"],
+    });
+
+  it("parses the reply, writes tags to the item, and reports what was added", async () => {
+    const provider = fakeProvider(async () => ({ text: "machine learning, rag" }));
+    const { orchestrator, events, tagWriter } = setup({
+      provider,
+      contexts: [annotated("AAA", "Paper A")],
+      tagWriter: fakeTagWriter(),
+    });
+    await orchestrator.run({ kind: "suggest-tags", items: [{ libraryID: 1, key: "AAA" }] });
+
+    expect(tagWriter.addTags).toHaveBeenCalledWith(
+      { libraryID: 1, key: "AAA" },
+      ["machine learning", "rag"],
+    );
+    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(completed.result.sections[0]?.markdown).toBe("Added 2 tags: machine learning, rag");
+  });
+
+  it("reports when no new tags were added", async () => {
+    const provider = fakeProvider(async () => ({ text: "" }));
+    const { orchestrator, events } = setup({
+      provider,
+      contexts: [annotated("AAA", "Paper A")],
+    });
+    await orchestrator.run({ kind: "suggest-tags", items: [{ libraryID: 1, key: "AAA" }] });
+    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(completed.result.sections[0]?.markdown).toBe("No new tags were added.");
+  });
+
+  it("fails cleanly when no tag writer is configured", async () => {
+    const orchestrator = createWorkflowOrchestrator({
+      ensureProvider: async () => fakeProvider(),
+      reader: fakeReader([annotated("AAA", "Paper A")]),
+      noteWriter: fakeNoteWriter(),
+      prefs: fakePrefs(),
+      logger: noopLogger,
+    });
+    const events: WorkflowEvent[] = [];
+    orchestrator.subscribe((e) => events.push(e));
+    await orchestrator.run({ kind: "suggest-tags", items: [{ libraryID: 1, key: "AAA" }] });
+    expect(eventTypes(events)).toEqual(["failed"]);
+  });
+});
+
+describe("write-safety on partial failure (S4-06)", () => {
+  it("keeps tags written to earlier items and writes nothing to the failing item", async () => {
+    let call = 0;
+    const provider = fakeProvider(async () => {
+      call += 1;
+      if (call === 2) throw new ProviderResponseError("boom");
+      return { text: "alpha, beta" };
+    });
+    const contexts = [
+      itemContext({ ref: { libraryID: 1, key: "AAA" }, metadata: metadata({ key: "AAA", title: "Paper A" }) }),
+      itemContext({ ref: { libraryID: 1, key: "BBB" }, metadata: metadata({ key: "BBB", title: "Paper B" }) }),
+    ];
+    const tagWriter = fakeTagWriter();
+    const { orchestrator, events } = setup({ provider, contexts, tagWriter });
+    await orchestrator.run({ kind: "suggest-tags", items: refs });
+
+    // Item 1 written; item 2 (the failing one) never reached the writer (NFR-023).
+    expect(tagWriter.addTags).toHaveBeenCalledTimes(1);
+    expect(tagWriter.addTags).toHaveBeenCalledWith({ libraryID: 1, key: "AAA" }, ["alpha", "beta"]);
+    expect(eventTypes(events).at(-1)).toBe("failed");
+    expect(orchestrator.lastResult()?.sections).toHaveLength(1);
+    expect(orchestrator.lastResult()?.sections[0]?.ref.key).toBe("AAA");
   });
 });

@@ -4,6 +4,7 @@
  * from ./types — no Zotero objects leak past this module (S2-01). */
 
 import type { Logger } from "../core/errors";
+import { mergeTags } from "../core/tags";
 import type {
   AnnotationInfo,
   ItemContext,
@@ -12,6 +13,7 @@ import type {
   ItemRef,
   NoteInfo,
   NoteWriter,
+  TagWriter,
 } from "./types";
 
 export interface SelectedItem extends ItemRef {
@@ -179,6 +181,29 @@ export function createNoteWriter(logger: Logger): NoteWriter {
       await note.saveTx();
       logger.log(`note ${note.key} created under item ${ref.key}`);
       return { noteKey: note.key };
+    },
+  };
+}
+
+/** Tag writer (S4-05). Writes suggested tags straight onto the item after the
+ * workflow starts — no per-tag confirmation (FR-059, FR-062, FR-063, BR-003).
+ * Case-insensitive duplicates are dropped before writing (FR-064, NFR-020) so
+ * a re-run adds nothing new; never touches collections (EIR-006, NFR-022). */
+export function createTagWriter(logger: Logger): TagWriter {
+  return {
+    async addTags(ref: ItemRef, tags: string[]): Promise<{ added: string[] }> {
+      const item = await Zotero.Items.getByLibraryAndKeyAsync(ref.libraryID, ref.key);
+      if (!item) {
+        logger.log(`item ${ref.libraryID}/${ref.key} no longer exists; no tags written`);
+        return { added: [] };
+      }
+      const existing = item.getTags().map((tag) => tag.tag);
+      const { added } = mergeTags(existing, tags);
+      if (added.length === 0) return { added: [] };
+      for (const tag of added) item.addTag(tag);
+      await item.saveTx();
+      logger.log(`added ${added.length} tag(s) to item ${ref.key}`);
+      return { added };
     },
   };
 }

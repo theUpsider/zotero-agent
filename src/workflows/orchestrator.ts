@@ -8,7 +8,7 @@
  * One workflow at a time; a failing item leaves earlier sections intact and
  * never writes to Zotero (NFR-023 groundwork). */
 
-import { parseColorSemantics } from "../core/colorSemantics";
+import { configuredCategories, parseColorSemantics, type Category } from "../core/colorSemantics";
 import { getBoolPref, getIntPref, getStringPref, PREF_DEFAULTS, PREF_KEYS, type PrefStore } from "../core/config";
 import { AgentError, toUserMessage, type ErrorCode, type Logger } from "../core/errors";
 import { markdownToHtml } from "../core/markdown";
@@ -18,16 +18,42 @@ import {
   composeItemContexts,
   composeTemplatePrompt,
   type ComposedContext,
+  type ComposedItemContext,
 } from "../prompts/composer";
+import {
+  composeAnalysisPrompt,
+  composeNoteFromAnnotationsPrompt,
+  composeSummarizeNotesPrompt,
+  composeTagSuggestionPrompt,
+  parseTagSuggestions,
+} from "../prompts/scholarly";
 import { getTemplate, PROMPT_TEMPLATES, type PromptTemplate } from "../prompts/templates";
 import type { AIProvider } from "../providers/types";
 import type { RetrievalBackend, RetrievalResult } from "../retrieval/types";
-import type { ItemContext, ItemContextReader, ItemRef, NoteWriter } from "../zotero/types";
+import type { ItemContext, ItemContextReader, ItemRef, NoteWriter, TagWriter } from "../zotero/types";
 import type { WorkflowId, WorkflowResult, WorkflowResultSection } from "./types";
 
 export type WorkflowRunRequest =
   | { kind: "template"; templateId: string; items: ItemRef[] }
-  | { kind: "free-prompt"; prompt: string; items: ItemRef[] };
+  | { kind: "free-prompt"; prompt: string; items: ItemRef[] }
+  | { kind: "analyze-papers"; items: ItemRef[] }
+  | { kind: "generate-notes"; items: ItemRef[] }
+  | { kind: "summarize-notes"; items: ItemRef[] }
+  | { kind: "suggest-tags"; items: ItemRef[] };
+
+/** Per-item AI workflows share one loop (runPerItem): build a prompt from the
+ * composed context, optionally short-circuit before the AI call, optionally
+ * post-process the reply (tag writing). Free-prompt is the one exception —
+ * a single combined call — and stays on its own path. */
+interface PerItemPlan {
+  buildPrompt: (item: ComposedItemContext, ctx: ItemContext) => string;
+  /** Return a message to record instead of calling the provider (e.g. "no
+   * annotations to process", S4-03) — never an empty AI call. */
+  skip?: (ctx: ItemContext) => string | null;
+  /** Transform the reply into the section markdown; used by suggest-tags to
+   * write tags and report what was added (S4-05). */
+  transform?: (ctx: ItemContext, markdown: string) => Promise<string>;
+}
 
 export type WorkflowEvent =
   | { type: "started"; workflowId: WorkflowId; itemCount: number }
@@ -57,9 +83,88 @@ export interface OrchestratorDeps {
   ensureProvider: () => Promise<AIProvider>;
   reader: ItemContextReader;
   noteWriter: NoteWriter;
+  /** Required for the suggest-tags workflow (S4-05); absent = that workflow
+   * fails cleanly with a config error. */
+  tagWriter?: TagWriter;
   prefs: PrefStore;
   logger: Logger;
   retrieval?: OrchestratorRetrievalDeps;
+}
+
+const WORKFLOW_ID_BY_KIND: Record<WorkflowRunRequest["kind"], WorkflowId> = {
+  template: "prompt-template",
+  "free-prompt": "free-prompt",
+  "analyze-papers": "analyze-papers",
+  "generate-notes": "generate-notes",
+  "summarize-notes": "summarize-notes",
+  "suggest-tags": "suggest-tags",
+};
+
+/** One-line retrieval query per workflow (S3-05): drives which passages are
+ * pulled when an item's PDF text is over the token budget. */
+function retrievalQueryText(
+  request: WorkflowRunRequest,
+  template: PromptTemplate | undefined,
+  categories: Category[],
+): string {
+  switch (request.kind) {
+    case "template":
+      return (template as PromptTemplate).retrievalHint ?? (template as PromptTemplate).label;
+    case "free-prompt":
+      return request.prompt;
+    case "analyze-papers":
+      return categories.join(", ");
+    case "generate-notes":
+      return "key annotations and highlights";
+    case "summarize-notes":
+      return "notes and annotations summary";
+    case "suggest-tags":
+      return "main topics, themes, and keywords";
+  }
+}
+
+/** The prompt/skip/transform strategy for a per-item workflow. free-prompt
+ * never reaches here (handled by runFreePrompt). */
+function planFor(
+  request: WorkflowRunRequest,
+  template: PromptTemplate | undefined,
+  categories: Category[],
+  tagWriter: TagWriter | undefined,
+): PerItemPlan {
+  switch (request.kind) {
+    case "template":
+      return { buildPrompt: (item) => composeTemplatePrompt(template as PromptTemplate, item.contextText) };
+    case "analyze-papers":
+      return { buildPrompt: (item) => composeAnalysisPrompt(item.contextText, categories) };
+    case "generate-notes":
+      return {
+        buildPrompt: (item) => composeNoteFromAnnotationsPrompt(item.contextText),
+        skip: (ctx) =>
+          ctx.annotations.length === 0
+            ? "This item has no annotations or highlights to turn into a note."
+            : null,
+      };
+    case "summarize-notes":
+      return {
+        buildPrompt: (item) => composeSummarizeNotesPrompt(item.contextText),
+        skip: (ctx) =>
+          ctx.notes.length === 0 && ctx.annotations.length === 0
+            ? "This item has no notes or annotations to summarize."
+            : null,
+      };
+    case "suggest-tags":
+      return {
+        buildPrompt: (item, ctx) => composeTagSuggestionPrompt(item.contextText, ctx.tags),
+        transform: async (ctx, markdown) => {
+          const { added } = await (tagWriter as TagWriter).addTags(ctx.ref, parseTagSuggestions(markdown));
+          return added.length > 0
+            ? `Added ${added.length} tag${added.length === 1 ? "" : "s"}: ${added.join(", ")}`
+            : "No new tags were added.";
+        },
+      };
+    case "free-prompt":
+      throw new AgentError("invalid-config", "free-prompt has no per-item plan.");
+  }
 }
 
 export interface WorkflowOrchestrator {
@@ -171,33 +276,38 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
     return result.text;
   };
 
-  /** Pushes into `sections` as items finish so a mid-run failure leaves the
-   * completed sections inspectable (NFR-023). */
-  const runTemplate = async (
+  /** Runs a per-item plan, pushing into `sections` as each item finishes so a
+   * mid-run failure leaves completed sections inspectable (NFR-023) and any
+   * writes on earlier items stay valid (S4-06). */
+  const runPerItem = async (
     provider: AIProvider,
-    template: PromptTemplate,
     composed: ComposedContext,
+    contexts: ItemContext[],
     signal: AbortSignal,
     sections: WorkflowResultSection[],
+    plan: PerItemPlan,
   ): Promise<WorkflowResultSection[]> => {
+    const byKey = new Map(contexts.map((c) => [c.metadata.key, c]));
     for (const [index, item] of composed.items.entries()) {
       signal.throwIfAborted();
       emit({
         type: "progress",
-        message: `Querying model for "${item.title || item.ref.key}"…`,
+        message: `Working on "${item.title || item.ref.key}"…`,
         fraction: index / composed.items.length,
       });
-      const markdown = await complete(
-        provider,
-        composeTemplatePrompt(template, item.contextText),
-        signal,
-      );
-      const section: WorkflowResultSection = {
-        ref: item.ref,
-        title: item.title,
-        markdown,
-        truncated: item.truncation !== undefined,
-      };
+      const ctx = byKey.get(item.ref.key);
+      const skipMessage = ctx ? plan.skip?.(ctx) ?? null : null;
+      let markdown: string;
+      let truncated = item.truncation !== undefined;
+      if (skipMessage !== null) {
+        // No AI call — record the reason (S4-03/S4-04).
+        markdown = skipMessage;
+        truncated = false;
+      } else {
+        markdown = await complete(provider, plan.buildPrompt(item, ctx as ItemContext), signal);
+        if (plan.transform && ctx) markdown = await plan.transform(ctx, markdown);
+      }
+      const section: WorkflowResultSection = { ref: item.ref, title: item.title, markdown, truncated };
       sections.push(section);
       emit({ type: "item-completed", section });
     }
@@ -227,7 +337,7 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
   };
 
   const execute = async (request: WorkflowRunRequest, signal: AbortSignal): Promise<void> => {
-    const workflowId: WorkflowId = request.kind === "template" ? "prompt-template" : "free-prompt";
+    const workflowId = WORKFLOW_ID_BY_KIND[request.kind];
     if (request.items.length === 0) {
       emit({ type: "failed", code: "invalid-config", message: "No items selected." });
       return;
@@ -245,6 +355,10 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
       emit({ type: "failed", code: "invalid-config", message: "Enter a prompt first." });
       return;
     }
+    if (request.kind === "suggest-tags" && !deps.tagWriter) {
+      emit({ type: "failed", code: "invalid-config", message: "Tag writing is unavailable." });
+      return;
+    }
 
     emit({ type: "started", workflowId, itemCount: request.items.length });
 
@@ -258,6 +372,8 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         emit({ type: "failed", code: "invalid-config", message: "The selected items no longer exist." });
         return;
       }
+      const colorSemantics = parseColorSemantics(getStringPref(deps.prefs, PREF_KEYS.colorSemantics));
+      const categories = configuredCategories(colorSemantics);
       const tokenBudgetPerItem = getIntPref(
         deps.prefs,
         PREF_KEYS.contextTokenBudget,
@@ -265,10 +381,6 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
       );
       let retrievedByItem: Map<string, RetrievalResult[]> | undefined;
       if (deps.retrieval && getBoolPref(deps.prefs, PREF_KEYS.retrievalEnabled, true)) {
-        const queryText =
-          request.kind === "template"
-            ? (template as PromptTemplate).retrievalHint ?? (template as PromptTemplate).label
-            : request.prompt;
         const passagesPerItem = getIntPref(
           deps.prefs,
           PREF_KEYS.retrievalPassagesPerItem,
@@ -276,7 +388,7 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         );
         retrievedByItem = await retrieveContext(
           contexts,
-          queryText,
+          retrievalQueryText(request, template, categories),
           tokenBudgetPerItem,
           passagesPerItem,
           deps.retrieval,
@@ -284,24 +396,27 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         );
       }
 
-      const composed = composeItemContexts(
-        contexts,
-        parseColorSemantics(getStringPref(deps.prefs, PREF_KEYS.colorSemantics)),
-        {
-          pdfTextCharBudgetPerItem: getIntPref(
-            deps.prefs,
-            PREF_KEYS.contextCharBudget,
-            PREF_DEFAULTS[PREF_KEYS.contextCharBudget] as number,
-          ),
-          tokenBudgetPerItem,
-          ...(retrievedByItem ? { retrievedByItem } : {}),
-        },
-      );
+      const composed = composeItemContexts(contexts, colorSemantics, {
+        pdfTextCharBudgetPerItem: getIntPref(
+          deps.prefs,
+          PREF_KEYS.contextCharBudget,
+          PREF_DEFAULTS[PREF_KEYS.contextCharBudget] as number,
+        ),
+        tokenBudgetPerItem,
+        ...(retrievedByItem ? { retrievedByItem } : {}),
+      });
 
       const sections =
-        request.kind === "template"
-          ? await runTemplate(provider, template as PromptTemplate, composed, signal, partialSections)
-          : await runFreePrompt(provider, request.prompt, composed, signal);
+        request.kind === "free-prompt"
+          ? await runFreePrompt(provider, request.prompt, composed, signal)
+          : await runPerItem(
+              provider,
+              composed,
+              contexts,
+              signal,
+              partialSections,
+              planFor(request, template, categories, deps.tagWriter),
+            );
 
       const notice = truncationNotice(composed);
       const content =

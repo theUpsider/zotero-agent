@@ -56,6 +56,13 @@ describe("createWorkflowUiApi", () => {
     });
   });
 
+  it("startWorkflow delegates a named scholarly workflow to orchestrator.run (S4-05)", () => {
+    const orchestrator = fakeOrchestrator();
+    const api = createWorkflowUiApi(orchestrator);
+    expect(api.startWorkflow("suggest-tags", items)).toEqual({ ok: true });
+    expect(orchestrator.run).toHaveBeenCalledWith({ kind: "suggest-tags", items });
+  });
+
   it("refuses to start while a workflow is running", () => {
     const orchestrator = fakeOrchestrator({ isRunning: () => true });
     const api = createWorkflowUiApi(orchestrator);
