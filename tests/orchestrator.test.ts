@@ -603,7 +603,24 @@ describe("auto-highlight workflow (S5-02)", () => {
   it("resolves passages, writes highlights, and summarizes per category", async () => {
     const highlightWriter = fakeHighlightWriter();
     const { orchestrator, events } = setup({
-      provider: fakeProvider(async () => ({ text: reply })),
+      provider: fakeProvider(async (request) => {
+        const prompt = request.messages[0]!.content;
+        if (prompt.includes("- results\n")) {
+          return {
+            text: JSON.stringify([
+              { category: "wrong model label", quote: "42% improvement over the baseline" },
+            ]),
+          };
+        }
+        if (prompt.includes("- limitations\n")) {
+          return {
+            text: JSON.stringify([
+              { category: "limitations", quote: "small sample" },
+            ]),
+          };
+        }
+        return { text: "[]" };
+      }),
       contexts: [twoItems[0]!],
       highlightWriter,
     });
@@ -630,6 +647,31 @@ describe("auto-highlight workflow (S5-02)", () => {
     // One model call, one write call, zero interactive prompts.
     expect(highlightWriter.readTargets).toHaveBeenCalledTimes(1);
     expect(highlightWriter.createHighlights).toHaveBeenCalledTimes(1);
+  });
+
+  it("queries every configured highlight category in its own model pass", async () => {
+    const provider = fakeProvider(async () => ({ text: "[]" }));
+    const { orchestrator } = setup({
+      provider,
+      contexts: [twoItems[0]!],
+      highlightWriter: fakeHighlightWriter(),
+    });
+
+    await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+
+    expect(provider.complete).toHaveBeenCalledTimes(7);
+    const prompts = vi.mocked(provider.complete).mock.calls.map((call) => call[0].messages[0]!.content);
+    for (const category of [
+      "methodology",
+      "results",
+      "literature",
+      "limitations",
+      "research question",
+      "data",
+      "open points",
+    ]) {
+      expect(prompts.filter((prompt) => prompt.includes(`- ${category}\n`))).toHaveLength(1);
+    }
   });
 
   it("fails cleanly when no highlight writer is configured", async () => {

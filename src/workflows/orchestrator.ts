@@ -362,11 +362,14 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
     }));
   };
 
-  /** Auto-highlight (S5-02): per item, ask the model for passages, resolve them
-   * to PDF positions, and draw highlights. Runs to completion after the single
-   * user start — no per-highlight prompt (FR-047). Each item's writes commit
-   * before the next starts, so a mid-run failure leaves earlier items' created
-   * highlights valid and reports the rest (NFR-023). */
+  /** Auto-highlight (S5-02): per item and per category, ask the model for
+   * passages, then resolve the combined suggestions to PDF positions and draw
+   * highlights. A dedicated pass prevents broad-category prompts from biasing
+   * the model toward only the strongest two or three categories. Runs to
+   * completion after the single user start — no per-highlight prompt (FR-047).
+   * Each item's writes commit before the next starts, so a mid-run failure
+   * leaves earlier items' created highlights valid and reports the rest
+   * (NFR-023). */
   const runAutoHighlight = async (
     provider: AIProvider,
     composed: ComposedContext,
@@ -378,30 +381,56 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
   ): Promise<WorkflowResultSection[]> => {
     for (const [index, item] of composed.items.entries()) {
       signal.throwIfAborted();
-      emit({
-        type: "progress",
-        message: `Highlighting "${item.title || item.ref.key}"…`,
-        fraction: index / composed.items.length,
-      });
       const targets = await highlightWriter.readTargets(item.ref);
       let markdown: string;
       if (targets.pages.length === 0) {
         markdown = "This item has no readable PDF text, so nothing was highlighted.";
       } else {
-        const reply = await complete(
-          provider,
-          composeHighlightPrompt(item.contextText, categories),
-          signal,
-        );
-        const suggestions = parseHighlightSuggestions(reply);
+        const suggestions = [];
+        for (const [categoryIndex, category] of categories.entries()) {
+          signal.throwIfAborted();
+          emit({
+            type: "progress",
+            message: `Highlighting "${item.title || item.ref.key}": ${category}…`,
+            fraction:
+              (index + categoryIndex / Math.max(1, categories.length)) /
+              composed.items.length,
+          });
+          const reply = await complete(
+            provider,
+            composeHighlightPrompt(item.contextText, [category]),
+            signal,
+          );
+          suggestions.push(
+            ...parseHighlightSuggestions(reply).map((suggestion) => ({
+              category,
+              quote: suggestion.quote,
+            })),
+          );
+        }
         const { planned, unresolved } = planHighlights(
           suggestions,
           targets.pages,
           colorSemantics,
-          targets.existing,
+          [
+            ...targets.existing,
+            ...(targets.repairable ?? []).map((highlight) => ({
+              pageIndex: highlight.pageIndex,
+              text: highlight.text,
+            })),
+          ],
+        );
+        const toWrite = [...(targets.repairable ?? []), ...planned].filter(
+          (highlight, position, all) =>
+            all.findIndex(
+              (candidate) =>
+                candidate.pageIndex === highlight.pageIndex &&
+                candidate.category.toLowerCase() === highlight.category.toLowerCase() &&
+                candidate.text === highlight.text,
+            ) === position,
         );
         signal.throwIfAborted();
-        const { created, failed } = await highlightWriter.createHighlights(item.ref, planned);
+        const { created, failed } = await highlightWriter.createHighlights(item.ref, toWrite);
         markdown = summarizeHighlightRun({ created, unresolved, failed });
       }
       const section: WorkflowResultSection = {

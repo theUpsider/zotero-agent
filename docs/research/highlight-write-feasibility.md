@@ -46,13 +46,13 @@ annotations are editable.
 Creating the annotation is trivial *once we have `rects`*. Getting rects for
 "highlight the sentence that says X" requires page-level character geometry:
 
-- **`Zotero.PDFWorker`** (pdf-worker module) is the in-process bridge to
-  pdf.js. Beyond `getFullText(itemID)`, the worker supports structured
-  extraction with per-character/word positions (the same machinery Zotero
-  uses to import Mendeley/Citavi annotations, which also arrive as *quotes*
-  and must be located in the PDF — precedent that quote→rects works).
+- **`Zotero.PDFWorker` does not expose structured text.** Live Zotero source
+  inspection confirmed that its public manager only exposes `getFullText`.
+  Character geometry is read from an already-open reader's internal PDF
+  document via `getPageData({ pageIndex }).chars`. If no reader is open, the
+  page-note fallback is retained and automatically retried on a later run.
 - Strategy for Sprint 5:
-  1. Extract page text + glyph rectangles via the PDF worker for the target page(s).
+  1. Extract page text via `PDFWorker`; read character rectangles from the open reader.
   2. Normalize whitespace, fuzzy-find the model-quoted span in the page text
      (the model must be prompted to quote verbatim).
   3. Union the glyph rects of the matched span into line rects → `position.rects`.
@@ -66,7 +66,7 @@ Creating the annotation is trivial *once we have `rects`*. Getting rects for
 | Risk | Severity | Mitigation |
 |---|---|---|
 | `saveFromJSON` signature drift in Zotero 9 | low | probe script asserts the call; adapter isolates it |
-| PDF worker's positional extraction API is internal/undocumented | **high** | probe B below; if unusable, ship the note-annotation fallback first |
+| Reader character geometry API is internal/undocumented | **high** | adapter isolates it; validate rectangles; preserve and retry note fallback when unavailable |
 | Quote not found verbatim (ligatures, hyphenation, OCR) | medium | normalization + fuzzy window match; fallback annotation |
 | Sync/consistency of code-created annotations | low | they are ordinary items; verify sync in probe |
 | Two-column layouts produce wrong rect unions | medium | per-line rects (not one bounding box) |

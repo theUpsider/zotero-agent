@@ -209,12 +209,14 @@ export function createNoteWriter(logger: Logger): NoteWriter {
  * given Zotero 9 build exposes is the S2-08 "Probe B" live-verification item;
  * this is cast defensively so a missing method degrades to the note fallback
  * instead of throwing into the workflow. */
-interface StructuredGlyph {
-  /** [x1, y1, x2, y2] in PDF user space (origin bottom-left, points). */
-  rect: [number, number, number, number];
-}
-interface StructuredTextPage {
-  glyphs: { c: string; rect: [number, number, number, number] }[];
+interface ReaderChar {
+  c: string;
+  inlineRect?: [number, number, number, number];
+  rect?: [number, number, number, number];
+  ignorable?: boolean;
+  spaceAfter?: boolean;
+  lineBreakAfter?: boolean;
+  paragraphBreakAfter?: boolean;
 }
 
 /** Split full text into per-page text on the form-feed page delimiter Zotero's
@@ -244,14 +246,59 @@ function readExistingHighlights(attachment: Zotero.Item): ExistingHighlight[] {
     if (!text) continue;
     let pageIndex = 0;
     try {
-      const position = JSON.parse(annotation.annotationPosition ?? "{}") as { pageIndex?: number };
+      const position = JSON.parse(annotation.annotationPosition ?? "{}") as {
+        pageIndex?: number;
+        rects?: number[][];
+      };
       if (typeof position.pageIndex === "number") pageIndex = position.pageIndex;
+      if (!validRects(position.rects)) continue;
     } catch {
       // Malformed position: fall back to page 0; overlap test still helps.
     }
     existing.push({ pageIndex, text });
   }
   return existing;
+}
+
+function validRects(rects: unknown): rects is [number, number, number, number][] {
+  return (
+    Array.isArray(rects) &&
+    rects.length > 0 &&
+    rects.every(
+      (rect) =>
+        Array.isArray(rect) &&
+        rect.length === 4 &&
+        rect.every((value) => typeof value === "number" && Number.isFinite(value)) &&
+        rect[2]! > rect[0]! &&
+        rect[3]! > rect[1]!,
+    )
+  );
+}
+
+function readRepairableFallbacks(attachment: Zotero.Item): PlannedHighlight[] {
+  const repairable: PlannedHighlight[] = [];
+  for (const annotation of attachment.getAnnotations()) {
+    if (String(annotation.annotationType ?? "") !== "note") continue;
+    const match = /^\[([^\]]+)]\s+([\s\S]+)$/.exec(annotation.annotationComment ?? "");
+    if (!match) continue;
+    try {
+      const position = JSON.parse(annotation.annotationPosition ?? "{}") as {
+        pageIndex?: number;
+        rects?: number[][];
+      };
+      if (typeof position.pageIndex !== "number" || validRects(position.rects)) continue;
+      repairable.push({
+        pageIndex: position.pageIndex,
+        pageLabel: annotation.annotationPageLabel ?? String(position.pageIndex + 1),
+        category: match[1] as string,
+        color: annotation.annotationColor ?? "#ffd400",
+        text: match[2] as string,
+      });
+    } catch {
+      // Malformed third-party note position: not one of our repair candidates.
+    }
+  }
+  return repairable;
 }
 
 /** Union the glyph rects of `text` on `pageIndex` into per-line highlight rects
@@ -263,54 +310,116 @@ async function computeRects(
   text: string,
   logger: Logger,
 ): Promise<[number, number, number, number][] | null> {
-  let page: StructuredTextPage | undefined;
+  let chars: ReaderChar[] | undefined;
   try {
-    const worker = Zotero.PDFWorker as unknown as {
-      getStructuredText?: (id: number, pages: number[]) => Promise<StructuredTextPage[]>;
+    const readerManager = Zotero.Reader as unknown as {
+      _readers?: Array<{
+        itemID: number;
+        _initPromise?: Promise<unknown>;
+        _internalReader?: {
+          _primaryView?: {
+            _pdfPages?: Record<number, { chars?: ReaderChar[] }>;
+            _iframeWindow?: {
+              PDFViewerApplication?: {
+                pdfDocument?: { getPageData?: (arg: { pageIndex: number }) => Promise<{ chars?: ReaderChar[] }> };
+              };
+            };
+          };
+        };
+      }>;
     };
-    if (typeof worker.getStructuredText !== "function") return null;
-    const pages = await worker.getStructuredText(attachmentID, [pageIndex]);
-    page = pages?.[0];
+    const reader = readerManager._readers?.find((candidate) => candidate.itemID === attachmentID);
+    if (!reader) return null;
+    await reader._initPromise;
+    const view = reader._internalReader?._primaryView;
+    chars = view?._pdfPages?.[pageIndex]?.chars;
+    if (!chars) {
+      const getPageData = view?._iframeWindow?.PDFViewerApplication?.pdfDocument?.getPageData;
+      if (typeof getPageData !== "function") return null;
+      chars = (await getPageData.call(
+        view?._iframeWindow?.PDFViewerApplication?.pdfDocument,
+        { pageIndex },
+      )).chars;
+    }
   } catch (error) {
-    logger.error("PDF structured-text extraction failed; using note fallback", error);
+    logger.error("PDF reader character extraction failed; retaining note fallback", error);
     return null;
   }
-  if (!page || page.glyphs.length === 0) return null;
-
-  const pageChars = page.glyphs.map((g) => g.c).join("");
-  const at = normalizeIndexOf(pageChars, text);
+  if (!chars?.length) return null;
+  const source = readerText(chars);
+  const needle = normalizedReaderText(text, [...text].map((_, index) => index));
+  const at = source.text.indexOf(needle.text);
   if (at === -1) return null;
-  const matched = page.glyphs.slice(at, at + text.length);
-  return unionLineRects(matched);
+  const start = source.charMap[at];
+  const end = source.charMap[at + needle.text.length - 1];
+  if (start === undefined || end === undefined) return null;
+  return unionLineRects(chars.slice(start, end + 1));
 }
 
-/** Locate `needle` in `haystack` tolerant of whitespace/case, returning the
- * glyph index of the match or -1 (kept simple; the pure resolver already
- * guaranteed the text exists in the extracted page text). */
-function normalizeIndexOf(haystack: string, needle: string): number {
-  const direct = haystack.indexOf(needle);
-  if (direct !== -1) return direct;
-  const squash = (s: string) => s.replace(/\s+/g, " ").toLowerCase();
-  return squash(haystack).indexOf(squash(needle));
+function readerText(chars: ReaderChar[]): { text: string; charMap: number[] } {
+  const raw: string[] = [];
+  const sourceMap: number[] = [];
+  chars.forEach((char, index) => {
+    if (!char.ignorable) {
+      for (const c of char.c) {
+        raw.push(c);
+        sourceMap.push(index);
+      }
+      if (char.spaceAfter || char.lineBreakAfter || char.paragraphBreakAfter) {
+        raw.push(" ");
+        sourceMap.push(index);
+      }
+    }
+  });
+  return normalizedReaderText(raw.join(""), sourceMap);
 }
 
-/** Group glyphs into line rects by shared vertical band, unioning each line's
- * x-extent (S2-08: per-line rects, not one bounding box, for column safety). */
-function unionLineRects(glyphs: StructuredGlyph[]): [number, number, number, number][] {
-  const lines: [number, number, number, number][] = [];
-  for (const glyph of glyphs) {
-    const [x1, y1, x2, y2] = glyph.rect;
-    const line = lines.find((l) => Math.abs((l[1] + l[3]) / 2 - (y1 + y2) / 2) < (y2 - y1) * 0.6);
-    if (line) {
-      line[0] = Math.min(line[0], x1);
-      line[1] = Math.min(line[1], y1);
-      line[2] = Math.max(line[2], x2);
-      line[3] = Math.max(line[3], y2);
-    } else {
-      lines.push([x1, y1, x2, y2]);
+function normalizedReaderText(original: string, sourceMap: number[]): { text: string; charMap: number[] } {
+  const out: string[] = [];
+  const charMap: number[] = [];
+  let previousSpace = false;
+  for (let index = 0; index < original.length; index++) {
+    const char = original[index] as string;
+    if (char === "­" || /^[()[\]{}"'`]$/.test(char)) continue;
+    if (/[-‐‑‒–—−]/.test(char) && /\s/.test(original[index + 1] ?? "")) {
+      while (/\s/.test(original[index + 1] ?? "")) index++;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (previousSpace || out.length === 0) continue;
+      out.push(" ");
+      charMap.push(sourceMap[index] as number);
+      previousSpace = true;
+      continue;
+    }
+    previousSpace = false;
+    const canonical = ({ "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-" } as Record<string, string>)[char] ?? char.toLowerCase();
+    for (const expanded of canonical) {
+      out.push(expanded);
+      charMap.push(sourceMap[index] as number);
     }
   }
-  return lines;
+  return { text: out.join("").trimEnd(), charMap };
+}
+
+/** Group reader chars into exact per-line rects. */
+function unionLineRects(chars: ReaderChar[]): [number, number, number, number][] {
+  const lines: [number, number, number, number][] = [];
+  let line: [number, number, number, number] | null = null;
+  for (const char of chars) {
+    const rect = char.inlineRect ?? char.rect;
+    if (rect) {
+      line = line
+        ? [Math.min(line[0], rect[0]), Math.min(line[1], rect[1]), Math.max(line[2], rect[2]), Math.max(line[3], rect[3])]
+        : [...rect];
+    }
+    if (char.lineBreakAfter && line) {
+      lines.push(line);
+      line = null;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.filter((rect) => validRects([rect]));
 }
 
 /** Zero-padded "ppppp|oooooo|ttttt" sort index the reader uses for ordering. */
@@ -336,7 +445,11 @@ export function createHighlightWriter(logger: Logger): HighlightWriter {
       } catch (error) {
         logger.error("PDFWorker full-text extraction failed for highlighting", error);
       }
-      return { pages, existing: readExistingHighlights(attachment) };
+      return {
+        pages,
+        existing: readExistingHighlights(attachment),
+        repairable: readRepairableFallbacks(attachment),
+      };
     },
 
     async createHighlights(
@@ -360,6 +473,16 @@ export function createHighlightWriter(logger: Logger): HighlightWriter {
 
       for (const highlight of planned) {
         try {
+          const fallback = attachment.getAnnotations().find((annotation) => {
+            if (String(annotation.annotationType ?? "") !== "note") return false;
+            if ((annotation.annotationComment ?? "") !== `[${highlight.category}] ${highlight.text}`) return false;
+            try {
+              const position = JSON.parse(annotation.annotationPosition ?? "{}") as { rects?: number[][] };
+              return !validRects(position.rects);
+            } catch {
+              return false;
+            }
+          });
           const rects = await computeRects(attachmentID, highlight.pageIndex, highlight.text, logger);
           const key = Zotero.Utilities.generateObjectKey();
           if (rects && rects.length > 0) {
@@ -374,7 +497,18 @@ export function createHighlightWriter(logger: Logger): HighlightWriter {
               position: { pageIndex: highlight.pageIndex, rects },
             });
             created.push({ ...highlight, kind: "highlight" });
+            if (fallback) {
+              try {
+                await fallback.eraseTx();
+              } catch (error) {
+                logger.error("replacement highlight saved but old fallback note could not be removed", error);
+              }
+            }
           } else {
+            if (fallback) {
+              created.push({ ...highlight, kind: "note" });
+              continue;
+            }
             // Committed fallback: a page-level note annotation carrying the
             // passage, so the passage is still surfaced in the reader (S2-08).
             await annotations.saveFromJSON(attachment, {

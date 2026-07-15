@@ -93,6 +93,10 @@ export interface PlannedHighlight {
 export interface HighlightTargets {
   pages: PdfPageText[];
   existing: ExistingHighlight[];
+  /** Plugin-created zero-position note fallbacks from earlier runs. These are
+   * retried as real highlights and removed only after a valid replacement is
+   * saved. */
+  repairable?: PlannedHighlight[];
 }
 
 /** A highlight the writer actually created, echoed back for the result
