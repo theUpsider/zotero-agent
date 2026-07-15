@@ -47,7 +47,7 @@ export const PREF_DEFAULTS: Record<string, string | number | boolean> = {
   [PREF_KEYS.openaiModel]: "",
   [PREF_KEYS.openaiApiKeyFallback]: "",
   [PREF_KEYS.colorSemantics]: "",
-  [PREF_KEYS.requestTimeoutMs]: 30000,
+  [PREF_KEYS.requestTimeoutMs]: 300_000,
   [PREF_KEYS.contextCharBudget]: 20000,
   [PREF_KEYS.contextTokenBudget]: 4000,
   [PREF_KEYS.retrievalEnabled]: true,

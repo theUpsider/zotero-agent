@@ -18,7 +18,7 @@ attachment. Two creation paths:
 
 1. **`Zotero.Annotations.saveFromJSON(attachment, json, saveOptions)`** —
    the path the reader itself and importers use. `json` fields:
-   - `key` (optional; generated when omitted)
+   - `key` (required in Zotero 9; generate with `Zotero.Utilities.generateObjectKey()`)
    - `type`: `"highlight"` (also `underline`, `note`, `image`, `ink`)
    - `color`: hex string, e.g. `"#ffd400"`
    - `text`: the highlighted text (what `annotationText` returns)
@@ -84,6 +84,7 @@ var att = item.isPDFAttachment() ? item
 if (!att) throw new Error("no PDF attachment selected");
 
 var annotation = await Zotero.Annotations.saveFromJSON(att, {
+  key: Zotero.Utilities.generateObjectKey(),
   type: "highlight",
   color: "#ffd400",
   text: "probe highlight (S2-08)",

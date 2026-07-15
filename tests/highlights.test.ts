@@ -109,6 +109,43 @@ describe("planHighlights", () => {
     expect(planned[0]?.text).toBe("the experi-\nmental   design was RANDOMIZED");
   });
 
+  it("tolerates dash/quote variants the model substitutes for plain ASCII ones", () => {
+    const pages: PdfPageText[] = [
+      { pageIndex: 0, pageLabel: "1", text: "an end-to-end open-source system for real-time use" },
+    ];
+    const { planned } = planHighlights(
+      [{ category: "methodology", quote: "an end‑to‑end open‑source system for real‑time use" }],
+      pages,
+      semantics,
+      [],
+    );
+    expect(planned).toHaveLength(1);
+    expect(planned[0]?.text).toBe("an end-to-end open-source system for real-time use");
+  });
+
+  it("tolerates omitted sentence punctuation while keeping every word exact", () => {
+    const pages: PdfPageText[] = [
+      {
+        pageIndex: 0,
+        pageLabel: "1",
+        text: "Large Audio-Language Models (LALMs) perform well but lack tool-calling found in recent Large Language Models (LLMs).",
+      },
+    ];
+    const { planned } = planHighlights(
+      [
+        {
+          category: "research question",
+          quote: "Large Audio-Language Models (LALMs) perform well but lack tool-calling found in recent Large Language Models (LLMs.",
+        },
+      ],
+      pages,
+      semantics,
+      [],
+    );
+    expect(planned).toHaveLength(1);
+    expect(planned[0]?.text).toBe(pages[0]?.text);
+  });
+
   it("reports quotes that cannot be located, never dropping them", () => {
     const { planned, unresolved } = planHighlights(
       [{ category: "results", quote: "this sentence is not in the paper" }],

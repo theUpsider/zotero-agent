@@ -66,7 +66,7 @@ describe("resolveProviderSettings", () => {
       endpoint: "http://localhost:11434/v1",
       model: "llama3",
       apiKey: "sk-secret",
-      timeoutMs: 30000,
+      timeoutMs: 300000,
     });
   });
 

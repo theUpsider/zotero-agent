@@ -351,8 +351,9 @@ export function createHighlightWriter(logger: Logger): HighlightWriter {
         return { created, failed: planned.map((p) => ({ text: p.text, reason: "no PDF attachment" })) };
       }
       const attachment = Zotero.Items.get(attachmentID);
-      // saveFromJSON fills id/key/dateModified itself; the published type def
-      // requires them, so call through a loose view matching its real contract.
+      // Zotero 9 requires callers to provide a unique object key. Other
+      // generated fields are still filled by saveFromJSON, so call through a
+      // loose view matching that runtime contract.
       const annotations = Zotero.Annotations as unknown as {
         saveFromJSON(att: Zotero.Item, json: Record<string, unknown>): Promise<Zotero.Item>;
       };
@@ -360,9 +361,11 @@ export function createHighlightWriter(logger: Logger): HighlightWriter {
       for (const highlight of planned) {
         try {
           const rects = await computeRects(attachmentID, highlight.pageIndex, highlight.text, logger);
+          const key = Zotero.Utilities.generateObjectKey();
           if (rects && rects.length > 0) {
             const top = rects[0]![3];
             await annotations.saveFromJSON(attachment, {
+              key,
               type: "highlight",
               color: highlight.color,
               text: highlight.text,
@@ -375,6 +378,7 @@ export function createHighlightWriter(logger: Logger): HighlightWriter {
             // Committed fallback: a page-level note annotation carrying the
             // passage, so the passage is still surfaced in the reader (S2-08).
             await annotations.saveFromJSON(attachment, {
+              key,
               type: "note",
               color: highlight.color,
               comment: `[${highlight.category}] ${highlight.text}`,

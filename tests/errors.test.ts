@@ -5,6 +5,7 @@ import {
   InvalidConfigError,
   ModelNotFoundError,
   ProviderResponseError,
+  ProviderTimeoutError,
   ProviderUnavailableError,
   createLogger,
   redact,
@@ -20,6 +21,7 @@ describe("typed errors", () => {
       [new AuthenticationError("x"), "auth-failed"],
       [new ModelNotFoundError("x"), "model-not-found"],
       [new ProviderResponseError("x"), "provider-response"],
+      [new ProviderTimeoutError("x"), "provider-timeout"],
     ];
     for (const [error, code] of cases) {
       expect(error).toBeInstanceOf(AgentError);
@@ -42,6 +44,7 @@ describe("toUserMessage", () => {
     expect(toUserMessage(new AuthenticationError("x"))).toMatch(/rejected the api key/i);
     expect(toUserMessage(new ModelNotFoundError(""))).toMatch(/model.*not found/i);
     expect(toUserMessage(new ProviderResponseError("x"))).toMatch(/unexpected response/i);
+    expect(toUserMessage(new ProviderTimeoutError("x"))).toMatch(/timed out/i);
   });
 
   it("uses the specific message for config and model errors when present", () => {

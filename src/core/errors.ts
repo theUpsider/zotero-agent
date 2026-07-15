@@ -5,6 +5,7 @@
 export type ErrorCode =
   | "invalid-config"
   | "provider-unavailable"
+  | "provider-timeout"
   | "auth-failed"
   | "model-not-found"
   | "provider-response"
@@ -30,6 +31,12 @@ export class InvalidConfigError extends AgentError {
 export class ProviderUnavailableError extends AgentError {
   constructor(message: string, options?: { cause?: unknown }) {
     super("provider-unavailable", message, options);
+  }
+}
+
+export class ProviderTimeoutError extends AgentError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super("provider-timeout", message, options);
   }
 }
 
@@ -62,6 +69,8 @@ export function toUserMessage(error: unknown): string {
           : "The provider is not fully configured. Enter an endpoint URL and model in the settings.";
       case "provider-unavailable":
         return "Could not reach the AI service. Check the endpoint URL and your internet connection.";
+      case "provider-timeout":
+        return "The AI request timed out before the model finished. Increase the provider request timeout or use a faster model.";
       case "auth-failed":
         return "The AI service rejected the API key. Check the key in the settings.";
       case "model-not-found":

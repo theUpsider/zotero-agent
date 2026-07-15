@@ -464,7 +464,19 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         PREF_DEFAULTS[PREF_KEYS.contextTokenBudget] as number,
       );
       let retrievedByItem: Map<string, RetrievalResult[]> | undefined;
-      if (deps.retrieval && getBoolPref(deps.prefs, PREF_KEYS.retrievalEnabled, true)) {
+      // Auto-highlight must quote passages verbatim from the text the model
+      // actually sees (planHighlights only accepts an exact substring match).
+      // Retrieval narrows that text to a handful of passages picked by a
+      // generic "<categories>" query, so an over-budget item leaves the model
+      // unable to see (and thus quote) most of the paper — it falls back to
+      // paraphrasing from memory instead, and every quote comes back
+      // unresolved. The char-budget truncation fallback in composeItemContexts
+      // gives it real, contiguous text instead.
+      if (
+        deps.retrieval &&
+        request.kind !== "auto-highlight" &&
+        getBoolPref(deps.prefs, PREF_KEYS.retrievalEnabled, true)
+      ) {
         const passagesPerItem = getIntPref(
           deps.prefs,
           PREF_KEYS.retrievalPassagesPerItem,

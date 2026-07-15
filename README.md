@@ -86,7 +86,7 @@ preferences (decision OP-006); the single source of key names and defaults is
 | `provider.active` | `openai-compatible` | Active AI provider id |
 | `provider.openaiCompatible.endpoint` | `""` | Base URL, e.g. `http://localhost:11434/v1` |
 | `provider.openaiCompatible.model` | `""` | Model id, e.g. `llama3` |
-| `provider.requestTimeoutMs` | `30000` | HTTP timeout for provider calls |
+| `provider.requestTimeoutMs` | `300000` | HTTP timeout for provider calls (5 minutes) |
 | `colorSemantics` | `""` | JSON color→category mapping (empty = defaults) |
 
 ### Credential storage

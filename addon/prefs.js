@@ -15,7 +15,7 @@ pref("extensions.zotero-agent.provider.openaiCompatible.endpoint", "");
 pref("extensions.zotero-agent.provider.openaiCompatible.model", "");
 
 // Request timeout for provider HTTP calls, in milliseconds.
-pref("extensions.zotero-agent.provider.requestTimeoutMs", 30000);
+pref("extensions.zotero-agent.provider.requestTimeoutMs", 300000);
 
 // JSON-serialized color-to-category mapping; empty means built-in defaults.
 pref("extensions.zotero-agent.colorSemantics", "");

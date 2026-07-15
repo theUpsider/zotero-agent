@@ -97,6 +97,24 @@ const LIGATURES: Record<string, string> = {
   "ﬆ": "st",
 };
 
+/** Dash and quote variants a model tends to substitute (typographic
+ * formatting habits) for the plain ASCII characters a PDF extraction
+ * actually contains — folded to a canonical form so an otherwise-verbatim
+ * quote still resolves (S5-01). Quote/bracket delimiters are ignored entirely:
+ * models commonly omit one while leaving every word unchanged. */
+const PUNCTUATION_VARIANTS: Record<string, string> = {
+  "‐": "-", // hyphen
+  "‑": "-", // non-breaking hyphen
+  "‒": "-", // figure dash
+  "–": "-", // en dash
+  "—": "-", // em dash
+  "−": "-", // minus sign
+  "‘": "'", // left single quote
+  "’": "'", // right single quote
+  "“": '"', // left double quote
+  "”": '"', // right double quote
+};
+
 /** Normalize page text into a canonical form plus a map from each normalized
  * character back to its index in the original string, so a match in normalized
  * space can be sliced verbatim from the original. Tolerance (documented for
@@ -115,8 +133,10 @@ function normalize(original: string): Normalized {
   for (let i = 0; i < original.length; i++) {
     const ch = original[i] as string;
     if (ch === "­") continue; // soft hyphen: always drop
+    const canonicalPunctuation = PUNCTUATION_VARIANTS[ch] ?? ch;
+    if (/^[()[\]{}"'`]$/.test(canonicalPunctuation)) continue;
     // End-of-line hyphenation: a hyphen directly before whitespace joins.
-    if ((ch === "-" || ch === "‐") && /\s/.test(original[i + 1] ?? "")) {
+    if ((ch === "-" || PUNCTUATION_VARIANTS[ch] === "-") && /\s/.test(original[i + 1] ?? "")) {
       // skip the hyphen and the following run of whitespace
       let j = i + 1;
       while (j < original.length && /\s/.test(original[j] as string)) j++;
@@ -131,7 +151,7 @@ function normalize(original: string): Normalized {
       continue;
     }
     prevWasSpace = false;
-    const expansion = LIGATURES[ch] ?? ch.toLowerCase();
+    const expansion = LIGATURES[ch] ?? canonicalPunctuation.toLowerCase();
     for (const c of expansion) {
       out.push(c);
       map.push(i);

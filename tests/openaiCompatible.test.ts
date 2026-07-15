@@ -17,6 +17,7 @@ import {
   InvalidConfigError,
   ModelNotFoundError,
   ProviderResponseError,
+  ProviderTimeoutError,
   ProviderUnavailableError,
   noopLogger,
 } from "../src/core/errors";
@@ -182,7 +183,7 @@ describe("OpenAICompatibleProvider.complete", () => {
     );
   });
 
-  it("times out and reports the provider as unavailable", async () => {
+  it("reports request timeouts distinctly from network failures", async () => {
     vi.useFakeTimers();
     try {
       const fetch: FetchLike = (_url, init) =>
@@ -192,7 +193,7 @@ describe("OpenAICompatibleProvider.complete", () => {
           );
         });
       const pending = provider(fetch, { timeoutMs: 50 }).complete({ messages: [] });
-      const assertion = expect(pending).rejects.toBeInstanceOf(ProviderUnavailableError);
+      const assertion = expect(pending).rejects.toBeInstanceOf(ProviderTimeoutError);
       await vi.advanceTimersByTimeAsync(60);
       await assertion;
     } finally {

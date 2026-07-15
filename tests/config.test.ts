@@ -59,4 +59,8 @@ describe("pref helpers", () => {
       expect(PREF_DEFAULTS, `missing default for ${key}`).toHaveProperty(key);
     }
   });
+
+  it("allows slow reasoning models five minutes by default", () => {
+    expect(PREF_DEFAULTS[PREF_KEYS.requestTimeoutMs]).toBe(300_000);
+  });
 });

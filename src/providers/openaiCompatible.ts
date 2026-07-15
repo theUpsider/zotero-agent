@@ -11,6 +11,7 @@ import {
   InvalidConfigError,
   ModelNotFoundError,
   ProviderResponseError,
+  ProviderTimeoutError,
   ProviderUnavailableError,
   redact,
 } from "../core/errors";
@@ -231,12 +232,22 @@ export class OpenAICompatibleProvider implements AIProvider {
   /** fetch with timeout; network failures and aborts become typed errors. */
   private async send(url: string, init: RequestInit, callerSignal?: AbortSignal): Promise<Response> {
     const controller = (this.deps.createAbortController ?? (() => new AbortController()))();
-    const timer = setTimeout(() => controller.abort(), this.settings.timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.settings.timeoutMs);
     const onCallerAbort = () => controller.abort();
     callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
     try {
       return await this.deps.fetch(url, { ...init, signal: controller.signal });
     } catch (error) {
+      if (timedOut) {
+        throw new ProviderTimeoutError(
+          `The AI request timed out after ${this.settings.timeoutMs} ms.`,
+          { cause: error },
+        );
+      }
       throw new ProviderUnavailableError(
         "Could not reach the AI service. Check the endpoint URL and your internet connection.",
         { cause: error },

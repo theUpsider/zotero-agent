@@ -640,6 +640,37 @@ describe("auto-highlight workflow (S5-02)", () => {
     expect(failed.message).toContain("Highlighting is unavailable");
   });
 
+  it("never substitutes retrieved passages for full text, even over budget (verbatim quoting needs the real text)", async () => {
+    const backend = fakeBackend(async () => [
+      {
+        chunk: { itemKey: "AAA", source: "pdf-text", text: "an unrelated snippet", chunkId: "AAA:pdf-text:0" },
+        score: 1,
+      },
+    ], ["AAA"]);
+    const bigItem = itemContext({
+      ref: { libraryID: 1, key: "AAA" },
+      metadata: metadata({ key: "AAA" }),
+      pdfText: "word ".repeat(10000) + "the smoking gun sentence",
+      pdfTextSource: "pdf-worker",
+    });
+    const highlightWriter = fakeHighlightWriter();
+    const prompts: string[] = [];
+    const provider = fakeProvider(async (request) => {
+      prompts.push(request.messages[0]!.content);
+      return { text: reply };
+    });
+    const { orchestrator } = setup({
+      provider,
+      contexts: [bigItem],
+      highlightWriter,
+      retrieval: { backend },
+    });
+    await orchestrator.run({ kind: "auto-highlight", items: [{ libraryID: 1, key: "AAA" }] });
+
+    expect(backend.query).not.toHaveBeenCalled();
+    expect(prompts[0]).not.toContain("an unrelated snippet");
+  });
+
   it("reports items whose PDF text cannot be read", async () => {
     const highlightWriter: HighlightWriter = {
       readTargets: vi.fn(async () => ({ pages: [], existing: [] })),
