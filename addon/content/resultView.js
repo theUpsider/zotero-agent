@@ -261,8 +261,26 @@
       setStatus("Running…");
       setProgress(undefined);
     } else {
+      /* The run can finish before this window's readiness poll succeeds
+       * (plugin.ts's ready-event wait times out and starts blind) — every
+       * "completed" event fires with nobody subscribed yet. Backfill from
+       * lastResult() here instead of leaving the window empty. */
+      const result = api.lastResult();
+      if (result) {
+        for (const section of result.sections) {
+          appendSection(section.title, section.markdown);
+        }
+        if (!hasSections) appendSection("", result.content);
+        if (result.truncationNotice) {
+          const note = $("za-truncation-note");
+          note.textContent = result.truncationNotice;
+          note.hidden = false;
+        }
+        setStatus("Done.");
+      } else {
+        setStatus(session && session.mode === "free-prompt" ? "Enter a prompt to start." : "");
+      }
       setRunningUi(false);
-      setStatus(session && session.mode === "free-prompt" ? "Enter a prompt to start." : "");
     }
   });
 })();
