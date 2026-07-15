@@ -42,6 +42,18 @@
     </html:div>
   </groupbox>
 
+  <groupbox id="za-auto-highlight-groupbox">
+    <label><html:h2>Auto-highlighting</html:h2></label>
+    <html:div class="za-row">
+      <html:label for="za-highlight-context-window">Maximum model context (tokens)</html:label>
+      <html:input id="za-highlight-context-window" type="number" min="8192" step="1024"
+        preference="extensions.zotero-agent.autoHighlight.contextWindowTokens"/>
+    </html:div>
+    <html:p class="za-hint">Auto-highlighting sends the whole PDF when it fits this limit.
+      If the provider reports a smaller context window, the smaller limit is used. Larger PDFs
+      are scanned completely in overlapping windows.</html:p>
+  </groupbox>
+
   <groupbox id="za-colors-groupbox">
     <label><html:h2>Highlight colors</html:h2></label>
     <html:p class="za-hint">Tell the assistant what each highlight color means in your notes.

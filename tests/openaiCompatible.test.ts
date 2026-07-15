@@ -9,11 +9,13 @@ import {
   classifyHttpError,
   normalizeBaseUrl,
   parseChatCompletionResponse,
+  parseModelCapabilitiesResponse,
   parseModelsResponse,
 } from "../src/providers/openaiCompatible";
 import type { FetchLike, ProviderSettings } from "../src/providers/types";
 import {
   AuthenticationError,
+  ContextLimitError,
   InvalidConfigError,
   ModelNotFoundError,
   ProviderResponseError,
@@ -123,6 +125,29 @@ describe("response parsing", () => {
   it("parses the models fixture", () => {
     expect(parseModelsResponse(modelsFixture)).toEqual(["llama3", "mistral", "gpt-4o-mini"]);
   });
+
+  it("parses common model context-window metadata fields", () => {
+    for (const field of [
+      "context_length",
+      "max_context_length",
+      "max_model_len",
+      "context_window",
+    ]) {
+      expect(
+        parseModelCapabilitiesResponse(
+          { data: [{ id: "other", [field]: 1 }, { id: "llama3", [field]: 32_768 }] },
+          "llama3",
+        ),
+      ).toEqual({ contextWindowTokens: 32_768 });
+    }
+    expect(
+      parseModelCapabilitiesResponse(
+        { data: [{ id: "llama3", context_length: "65536" }] },
+        "llama3",
+      ),
+    ).toEqual({ contextWindowTokens: 65_536 });
+    expect(parseModelCapabilitiesResponse(modelsFixture, "llama3")).toBeUndefined();
+  });
 });
 
 describe("classifyHttpError", () => {
@@ -142,6 +167,18 @@ describe("classifyHttpError", () => {
   it("maps plain 404 and 5xx to ProviderUnavailableError", () => {
     expect(classifyHttpError(404, "not found", settings)).toBeInstanceOf(ProviderUnavailableError);
     expect(classifyHttpError(500, "oops", settings)).toBeInstanceOf(ProviderUnavailableError);
+  });
+
+  it("classifies only explicit context-size rejections as ContextLimitError", () => {
+    expect(
+      classifyHttpError(400, "maximum context length is 8192 tokens", settings),
+    ).toBeInstanceOf(ContextLimitError);
+    expect(classifyHttpError(413, "request too large", settings)).toBeInstanceOf(
+      ContextLimitError,
+    );
+    expect(classifyHttpError(400, "bad request", settings)).toBeInstanceOf(
+      ProviderUnavailableError,
+    );
   });
 
   it("never includes the API key even when the body echoes it (S1-04)", () => {
@@ -211,6 +248,16 @@ describe("OpenAICompatibleProvider.validateConfig", () => {
       expect(result.message).toMatch(/llama3/);
       expect(result.models).toContain("llama3");
     }
+  });
+
+  it("reuses model discovery for capability lookup", async () => {
+    const fetch = vi.fn(async () =>
+      jsonResponse({ data: [{ id: "llama3", context_window: 16_384 }] }),
+    );
+    const instance = provider(fetch);
+    expect(await instance.listModels()).toEqual(["llama3"]);
+    expect(await instance.getModelCapabilities()).toEqual({ contextWindowTokens: 16_384 });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("reports ModelNotFoundError when the model is absent from /models", async () => {

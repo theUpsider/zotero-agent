@@ -206,7 +206,7 @@ no jargon, no API key fragments.
 
 ## Sprint 5 — auto-highlighting, offline, release
 
-### 19. Auto-highlight a paper (S5-01/S5-02/S5-09; FR-004, FR-041..FR-048, FR-102..FR-107, EIR-005, OP-009)
+### 19. Auto-highlight a paper (S5-01/S5-02/S5-09; FR-004, FR-041..FR-048, FR-102..FR-112, EIR-005, OP-009)
 
 1. Open the target PDF in Zotero's reader, then select its parent item with
    few/no existing highlights. Item menu (or
@@ -230,10 +230,22 @@ no jargon, no API key fragments.
    PDF reader and rerun. **Expected:** the existing zero-position plugin note is
    detected, replaced by a real highlight, and removed only after replacement
    succeeds. No second fallback note is created (FR-103..105).
-7. Use a PDF longer than the configured context character budget and place a
-   known passage near the end. **Expected:** the passage can be suggested from
-   a later page chunk; result has no "not indexed", "truncated text", or
-   "index updated in background" notice (FR-106/107), regardless of index count.
+7. Set the auto-highlight context cap above a small PDF's size. **Expected:**
+   provider logs show one request per configured category containing the full,
+   page-labelled PDF and the same reserved completion limit (FR-108/109).
+8. Use a PDF larger than the effective limit, including a sentence and a
+   compound-hyphen phrase crossing page/window boundaries. **Expected:** every
+   window is scanned with 500-character overlap and the boundary passages can
+   be anchored; result has no "not indexed", "truncated text", or "index
+   updated in background" notice (FR-106/107).
+9. Run the oversized PDF once indexed and once with retrieval unavailable.
+   **Expected:** indexed category matches are requested earlier, but both runs
+   scan every window exactly once and produce equivalent coverage; fallback is
+   document order with no index warning (FR-110).
+10. Against a test endpoint, reject one request with an explicit context-limit
+    response, then accept smaller requests. **Expected:** only the failed window
+    splits and retries with overlap. A non-context 4xx/5xx remains a workflow
+    failure and does not fan out retries (FR-112).
 
 ### 20. Highlight duplicate prevention (S5-03; FR-046, NFR-020)
 

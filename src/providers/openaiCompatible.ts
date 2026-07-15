@@ -8,6 +8,7 @@
 import {
   AgentError,
   AuthenticationError,
+  ContextLimitError,
   InvalidConfigError,
   ModelNotFoundError,
   ProviderResponseError,
@@ -20,6 +21,7 @@ import type {
   ChunkHandler,
   CompletionRequest,
   CompletionResult,
+  ModelCapabilities,
   ProviderDeps,
   ProviderSettings,
   ValidationResult,
@@ -95,6 +97,38 @@ export function parseModelsResponse(body: unknown): string[] {
     .filter((id): id is string => typeof id === "string");
 }
 
+const CONTEXT_FIELDS = [
+  "context_length",
+  "max_context_length",
+  "max_model_len",
+  "context_window",
+] as const;
+
+/** Read common OpenAI-compatible context-window fields for one model. Unknown
+ * response extensions are ignored and listModels() keeps returning ids only. */
+export function parseModelCapabilitiesResponse(
+  body: unknown,
+  model: string,
+): ModelCapabilities | undefined {
+  const data = body as { data?: Record<string, unknown>[] };
+  if (!Array.isArray(data?.data)) return undefined;
+  const entry = data.data.find((candidate) => candidate?.id === model);
+  if (!entry) return undefined;
+  for (const field of CONTEXT_FIELDS) {
+    const value = entry[field];
+    const numeric =
+      typeof value === "number"
+        ? value
+        : typeof value === "string" && value.trim() !== ""
+          ? Number(value)
+          : Number.NaN;
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return { contextWindowTokens: Math.floor(numeric) };
+    }
+  }
+  return undefined;
+}
+
 /** Map an HTTP error status to a typed error. Body text is truncated and
  * redacted before it can enter an error message. */
 export function classifyHttpError(
@@ -106,6 +140,11 @@ export function classifyHttpError(
   const detail = redact(bodyText.slice(0, 200), secrets);
   if (status === 401 || status === 403) {
     return new AuthenticationError("The AI service rejected the API key.");
+  }
+  const contextLimitPattern =
+    /context[_ -]?(?:length|window)|maximum context|max_model_len|too many tokens|token limit|request too large/i;
+  if ((status === 400 || status === 413 || status === 422) && contextLimitPattern.test(detail)) {
+    return new ContextLimitError("The request exceeded the model's context window.");
   }
   if ((status === 404 || status === 400) && detail.toLowerCase().includes("model")) {
     return new ModelNotFoundError(
@@ -144,6 +183,7 @@ export class OpenAICompatibleProvider implements AIProvider {
 
   readonly id = OpenAICompatibleProvider.ID;
   readonly label = OpenAICompatibleProvider.LABEL;
+  private modelsResponse: unknown | undefined;
 
   constructor(
     private readonly settings: ProviderSettings,
@@ -218,6 +258,15 @@ export class OpenAICompatibleProvider implements AIProvider {
   }
 
   async listModels(): Promise<string[]> {
+    return parseModelsResponse(await this.fetchModelsResponse());
+  }
+
+  async getModelCapabilities(): Promise<ModelCapabilities | undefined> {
+    return parseModelCapabilitiesResponse(await this.fetchModelsResponse(), this.settings.model);
+  }
+
+  private async fetchModelsResponse(): Promise<unknown> {
+    if (this.modelsResponse !== undefined) return this.modelsResponse;
     const base = normalizeBaseUrl(this.settings.endpoint);
     const response = await this.send(`${base}/models`, {
       method: "GET",
@@ -226,7 +275,8 @@ export class OpenAICompatibleProvider implements AIProvider {
     if (!response.ok) {
       throw classifyHttpError(response.status, await this.safeText(response), this.settings);
     }
-    return parseModelsResponse(await this.safeJson(response));
+    this.modelsResponse = await this.safeJson(response);
+    return this.modelsResponse;
   }
 
   /** fetch with timeout; network failures and aborts become typed errors. */

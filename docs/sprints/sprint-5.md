@@ -21,11 +21,11 @@ re-plans: highlight suggestions rendered as a note with page references instead)
 ## Backlog (priority-sorted)
 
 ### S5-01 · Passage identification for categories · **Must** · L
-**Refs:** FR-041, FR-042, FR-043, FR-045
+**Refs:** FR-041, FR-042, FR-043, FR-045, FR-102, FR-106..FR-112
 Workflow step: one AI pass per configured category identifies all relevant passages and
-per bounded, overlapping page-text chunk returns exact quotes; replies are merged and the
-resolver maps quotes to PDF text positions. Auto-highlight is independent of retrieval-index
-membership and covers the complete PDF without a truncation/index warning (FR-106/107).
+returns exact quotes; replies are merged and the resolver maps quotes to PDF text positions.
+A fitting PDF is one maximal request per category. Oversized PDFs use exhaustive 500-character-
+overlap windows; category retrieval ranks them but cannot remove coverage (FR-106..110).
 Most-relevant color is retained when passages overlap (FR-045, FR-102).
 
 **Acceptance criteria**
@@ -34,7 +34,10 @@ Most-relevant color is retained when passages overlap (FR-045, FR-102).
 - [x] Multi-category passage gets exactly one color: the most relevant category's (FR-045); tie-breaking rule documented. — suggestions processed most-relevant-first; overlapping later passage dropped as duplicate. Rule documented on `planHighlights`; tested ("keeps the most-relevant (first) category when passages overlap").
 - [x] Unresolvable passages (quote not found in PDF text) are reported in the result view, not silently dropped. — `unresolved` (`not-found`/`no-color`) surfaced by `summarizeHighlightRun`; tested in `highlights.test.ts` + `highlightSummary.test.ts`.
 - [x] Long otherwise-verbatim quotes tolerate dash loss/addition caused by PDF line wrapping (`state-of-the-\nart`, `X-toEnglish`) while short quotes remain strict. — conservative long-quote fallback in `locate`; regression-tested.
-- [x] Every PDF page reaches the provider through bounded overlapping chunks; no retrieval query, missing-index claim, or truncation notice is emitted for auto-highlight. — orchestrator regression test covers evidence after the former 20k boundary.
+- [x] A PDF below the effective provider/user context budget reaches each category in one complete request with explicit prompt/output/reasoning/safety reserves; common `/models` context fields are detected without changing `listModels()` compatibility.
+- [x] Oversized PDFs use maximal windows with 500-character overlap across page boundaries; category RAG changes order only, and missing/failed retrieval scans every window in document order without an index/truncation warning.
+- [x] Explicit provider context-limit failures split and retry only the failed window; other provider errors remain failures.
+- [x] Cross-page compound-hyphen quotes resolve to page-local highlight spans.
 
 ### S5-02 · Highlight creation in Zotero · **Must** · L
 **Refs:** FR-004, FR-044, FR-047, FR-048, EIR-005, MVP-004, OP-009
@@ -139,12 +142,15 @@ colors for manual highlighting. FR-004 then needs a documented requirement devia
 
 Implemented in this sprint: pure passage resolver + duplicate prevention
 (`workflows/highlights.ts`, `highlights.test.ts`), highlight prompt
-(`composeHighlightPrompt`), per-category provider passes, the `HighlightWriter` seam + `createHighlightWriter`
-adapter write path (`zotero/adapter.ts`), the `auto-highlight` orchestrator
-branch + result summary (`workflows/highlightSummary.ts`), the "Highlight paper"
-menu/UI wiring, `update.json` build generation, the offline + highlight + release
-smoke tests, the extended highlight eval rubric, and the MVP traceability doc.
-fallback detection/repair, and S5-08 closed as not feasible.
+(`composeHighlightPrompt`), per-category provider passes, the `HighlightWriter`
+seam + `createHighlightWriter` adapter write path (`zotero/adapter.ts`), the
+`auto-highlight` orchestrator branch + result summary
+(`workflows/highlightSummary.ts`), maximal-context packer
+(`workflows/highlightContext.ts`), provider capability metadata,
+category-specific RAG window ranking with exhaustive fallback, broken-highlight
+detection/repair, the "Highlight paper" menu/UI wiring, `update.json` build
+generation, offline + highlight + release smoke tests, and the extended
+highlight eval rubric and MVP traceability doc. S5-08 closed as not feasible.
 
 **Legend:** `[x]` done + covered by CI where testable · `[~]` code complete,
 final confirmation needs the manual Zotero-profile pass (smoke-tests.md) — code

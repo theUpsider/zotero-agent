@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import type { PrefStore } from "../src/core/config";
-import { AuthenticationError, noopLogger, ProviderResponseError } from "../src/core/errors";
+import { PREF_KEYS, type PrefStore } from "../src/core/config";
+import {
+  AuthenticationError,
+  ContextLimitError,
+  noopLogger,
+  ProviderResponseError,
+} from "../src/core/errors";
 import type { AIProvider, CompletionRequest } from "../src/providers/types";
 import type { RetrievalBackend, RetrievalQuery, RetrievalResult } from "../src/retrieval/types";
 import {
@@ -599,6 +604,12 @@ describe("auto-highlight workflow (S5-02)", () => {
     { category: "results", quote: "42% improvement over the baseline" },
     { category: "limitations", quote: "small sample" },
   ]);
+  const oneCategoryPrefs = (contextWindowTokens?: number): Record<string, unknown> => ({
+    [PREF_KEYS.colorSemantics]: JSON.stringify({ "#5fb236": ["results"] }),
+    ...(contextWindowTokens !== undefined
+      ? { [PREF_KEYS.autoHighlightContextWindowTokens]: contextWindowTokens }
+      : {}),
+  });
 
   it("resolves passages, writes highlights, and summarizes per category", async () => {
     const highlightWriter = fakeHighlightWriter();
@@ -715,6 +726,152 @@ describe("auto-highlight workflow (S5-02)", () => {
     const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
     expect(completed.result.truncationNotice).toBeUndefined();
     expect(completed.result.sections[0]?.truncated).toBe(false);
+  });
+
+  it("sends a fitting complete PDF once per category with the reserved output limit", async () => {
+    const pageText = `opening ${"evidence ".repeat(2_000)} closing`;
+    const provider = fakeProvider(async () => ({ text: "[]" }));
+    const { orchestrator } = setup({
+      provider,
+      contexts: [twoItems[0]!],
+      prefs: oneCategoryPrefs(),
+      highlightWriter: fakeHighlightWriter(pageText),
+    });
+    await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+
+    expect(provider.complete).toHaveBeenCalledTimes(7);
+    const request = vi.mocked(provider.complete).mock.calls[0]![0];
+    expect(request.messages[0]?.content).toContain(pageText);
+    expect(request.maxTokens).toBe(4_096);
+  });
+
+  it("uses lower provider metadata, while missing metadata keeps the 64K default", async () => {
+    const pageText = `START ${"middle ".repeat(4_000)} END`;
+    const limited = fakeProvider(async () => ({ text: "[]" }));
+    limited.getModelCapabilities = async () => ({ contextWindowTokens: 8_192 });
+    const limitedRun = setup({
+      provider: limited,
+      contexts: [twoItems[0]!],
+      prefs: oneCategoryPrefs(),
+      highlightWriter: fakeHighlightWriter(pageText),
+    });
+    await limitedRun.orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+    expect(vi.mocked(limited.complete).mock.calls.length).toBeGreaterThan(1);
+
+    const unknown = fakeProvider(async () => ({ text: "[]" }));
+    const unknownRun = setup({
+      provider: unknown,
+      contexts: [twoItems[0]!],
+      prefs: oneCategoryPrefs(),
+      highlightWriter: fakeHighlightWriter(pageText),
+    });
+    await unknownRun.orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+    expect(unknown.complete).toHaveBeenCalledTimes(7);
+  });
+
+  it("uses a user cap below the provider-reported context window", async () => {
+    const provider = fakeProvider(async () => ({ text: "[]" }));
+    provider.getModelCapabilities = async () => ({ contextWindowTokens: 65_536 });
+    const { orchestrator } = setup({
+      provider,
+      contexts: [twoItems[0]!],
+      prefs: oneCategoryPrefs(8_192),
+      highlightWriter: fakeHighlightWriter("content ".repeat(4_000)),
+    });
+    await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+    expect(vi.mocked(provider.complete).mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("uses category retrieval to prioritize an oversized PDF without losing coverage", async () => {
+    const pageText = `DOCUMENT-START ${"alpha ".repeat(1_000)} PRIORITY-PASSAGE ${"omega ".repeat(1_000)} DOCUMENT-END`;
+    const backend = fakeBackend(async () => [
+      {
+        chunk: {
+          itemKey: "AAA",
+          source: "pdf-text",
+          text: "PRIORITY-PASSAGE",
+          chunkId: "AAA:pdf-text:priority",
+        },
+        score: 10,
+      },
+    ], ["AAA"]);
+    const prompts: string[] = [];
+    const provider = fakeProvider(async (request) => {
+      prompts.push(request.messages[0]!.content);
+      return { text: "[]" };
+    });
+    const { orchestrator } = setup({
+      provider,
+      contexts: [twoItems[0]!],
+      prefs: oneCategoryPrefs(8_192),
+      retrieval: { backend },
+      highlightWriter: fakeHighlightWriter(pageText),
+    });
+    await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+
+    expect(backend.query).toHaveBeenCalledWith(expect.objectContaining({ text: "results" }));
+    expect(prompts.length).toBeGreaterThan(1);
+    expect(prompts[0]).toContain("PRIORITY-PASSAGE");
+    expect(prompts.some((prompt) => prompt.includes("DOCUMENT-START"))).toBe(true);
+    expect(prompts.some((prompt) => prompt.includes("DOCUMENT-END"))).toBe(true);
+  });
+
+  it("falls back to exhaustive document order when retrieval fails", async () => {
+    const backend = fakeBackend(async () => {
+      throw new Error("index unavailable");
+    }, ["AAA"]);
+    const prompts: string[] = [];
+    const provider = fakeProvider(async (request) => {
+      prompts.push(request.messages[0]!.content);
+      return { text: "[]" };
+    });
+    const { orchestrator, events } = setup({
+      provider,
+      contexts: [twoItems[0]!],
+      prefs: oneCategoryPrefs(8_192),
+      retrieval: { backend },
+      highlightWriter: fakeHighlightWriter(`DOCUMENT-START ${"body ".repeat(2_000)} DOCUMENT-END`),
+    });
+    await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+    expect(prompts[0]).toContain("DOCUMENT-START");
+    expect(prompts.some((prompt) => prompt.includes("DOCUMENT-END"))).toBe(true);
+    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(completed.result.truncationNotice).toBeUndefined();
+  });
+
+  it("splits and retries only a window rejected for context size", async () => {
+    let calls = 0;
+    const provider = fakeProvider(async () => {
+      calls += 1;
+      if (calls === 1) throw new ContextLimitError("too large");
+      return { text: "[]" };
+    });
+    const { orchestrator, events } = setup({
+      provider,
+      contexts: [twoItems[0]!],
+      prefs: oneCategoryPrefs(),
+      highlightWriter: fakeHighlightWriter("retryable content ".repeat(100)),
+    });
+    await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+    // The failed first category window becomes two successful calls; the six
+    // remaining categories each keep their one full-PDF call.
+    expect(provider.complete).toHaveBeenCalledTimes(9);
+    expect(eventTypes(events).at(-1)).toBe("completed");
+  });
+
+  it("does not split non-context provider failures", async () => {
+    const provider = fakeProvider(async () => {
+      throw new ProviderResponseError("malformed");
+    });
+    const { orchestrator, events } = setup({
+      provider,
+      contexts: [twoItems[0]!],
+      prefs: oneCategoryPrefs(),
+      highlightWriter: fakeHighlightWriter("content ".repeat(1_000)),
+    });
+    await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+    expect(provider.complete).toHaveBeenCalledTimes(1);
+    expect(eventTypes(events).at(-1)).toBe("failed");
   });
 
   it("reports items whose PDF text cannot be read", async () => {

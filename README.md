@@ -61,10 +61,15 @@ provides character rectangles needed to anchor real highlights. If geometry is
 temporarily unavailable, the plugin preserves a page-note fallback and retries
 it automatically during a later run with the PDF open.
 
-Auto-highlighting reads the complete PDF in bounded, overlapping page-text
-chunks. It intentionally does not depend on the local retrieval index: an
-"180 items indexed" count neither enables nor limits highlighting coverage.
-Indexing remains active for analysis, templates, and free-prompt retrieval.
+Auto-highlighting sends the complete, page-labelled PDF in one request per
+category whenever it fits the effective context window. The effective window
+is the lower of provider-reported model metadata and the configurable 65,536
+token cap, after prompt, output/reasoning, and estimation-safety reserves.
+Larger PDFs are scanned exhaustively in maximal windows with 500-character
+overlap. The local index may rank likely windows first for each category, but
+never removes a window or limits coverage. Missing or failed retrieval silently
+falls back to document order. If the provider rejects an estimated context
+size, only that failed window is split and retried.
 
 ## Releasing (S5-05)
 
@@ -99,6 +104,7 @@ preferences (decision OP-006); the single source of key names and defaults is
 | `provider.openaiCompatible.endpoint` | `""` | Base URL, e.g. `http://localhost:11434/v1` |
 | `provider.openaiCompatible.model` | `""` | Model id, e.g. `llama3` |
 | `provider.requestTimeoutMs` | `300000` | HTTP timeout for provider calls (5 minutes) |
+| `autoHighlight.contextWindowTokens` | `65536` | User cap for auto-highlight context; a lower provider-reported limit wins |
 | `colorSemantics` | `""` | JSON color→category mapping (empty = defaults) |
 
 ### Credential storage

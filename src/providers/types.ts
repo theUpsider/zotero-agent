@@ -35,6 +35,12 @@ export interface CompletionResult {
   usage?: { promptTokens?: number; completionTokens?: number };
 }
 
+/** Optional model metadata exposed by provider discovery endpoints. Providers
+ * that do not report a context size simply omit this capability. */
+export interface ModelCapabilities {
+  contextWindowTokens?: number;
+}
+
 /** Sprint 1 providers may buffer and emit a single chunk; the signature is
  * ready for SSE streaming without interface changes. */
 export type ChunkHandler = (chunk: { text: string }) => void;
@@ -52,6 +58,9 @@ export interface AIProvider {
   validateConfig(): Promise<ValidationResult>;
   complete(request: CompletionRequest, onChunk?: ChunkHandler): Promise<CompletionResult>;
   listModels?(): Promise<string[]>;
+  /** Capabilities for the currently configured model. Optional so existing
+   * providers and listModels() implementations remain source-compatible. */
+  getModelCapabilities?(): Promise<ModelCapabilities | undefined>;
 }
 
 /** Injectable HTTP seam: tests use fakes (no live HTTP), runtime injects the

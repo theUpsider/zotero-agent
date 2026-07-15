@@ -12,6 +12,7 @@ sequenceDiagram
     actor U as User
     participant M as Menu (ui)
     participant O as Orchestrator
+    participant R as Local Retrieval (optional)
     participant P as Provider (AIProvider)
     participant A as Zotero Adapter
     participant C as Prompt Composer
@@ -85,10 +86,27 @@ sequenceDiagram
     participant V as Result View
 
     O->>A: read complete PDF page text
-    O->>O: pack pages into bounded overlapping chunks (FR-106)
-    loop each configured category × text chunk (FR-102/106)
-        O->>P: identify relevant passages for one category in this chunk
+    O->>P: read optional configured-model context capability
+    O->>O: effective limit = min(provider, user cap)<br/>minus exact prompt + output/reasoning + safety reserves
+    alt complete PDF fits
+        O->>O: one page-labelled window
+    else oversized PDF
+        O->>O: maximal exhaustive windows,<br/>500-character overlap across every boundary
+    end
+    loop each configured category (FR-102)
+        opt oversized and indexed
+            O->>R: retrieve category-specific PDF passages
+            R-->>O: rank hints only
+            O->>O: stable-rank all windows; omit none
+        end
+        loop every window once (FR-106/110)
+        O->>P: identify relevant passages; reserved output limit
         P-->>O: exact quotes
+        opt explicit context-limit rejection
+            O->>O: split only failed window with overlap
+            O->>P: retry both halves
+        end
+        end
     end
     O->>Res: resolve quotes → PDF positions (fuzzy match)
     Res-->>O: positions | unresolved list
@@ -114,10 +132,10 @@ reader geometry is available, the adapter retains one zero-position page-note
 fallback. A later run detects it, reserves its span against duplicates, retries
 anchoring, and deletes the note only after a valid replacement is saved.
 
-Auto-highlight never uses retrieval passages: exact quoting needs contiguous
-source text, and page chunks cover the full PDF deterministically. Therefore
-its result never inherits the generic "not indexed / truncated text" notice.
-Retrieval-index state continues to govern analysis/template/free-prompt context.
+Auto-highlight never substitutes retrieval passages for source text. Retrieval
+only reorders exhaustive source windows and is ignored when unavailable, so
+exact quoting and complete coverage do not depend on index state. Therefore its
+result never inherits the generic "not indexed / truncated text" notice.
 
 ## 4. Scenario: background index update (no user, no network)
 

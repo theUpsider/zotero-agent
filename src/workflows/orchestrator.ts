@@ -15,7 +15,7 @@ import {
   type ColorSemantics,
 } from "../core/colorSemantics";
 import { getBoolPref, getIntPref, getStringPref, PREF_DEFAULTS, PREF_KEYS, type PrefStore } from "../core/config";
-import { AgentError, toUserMessage, type ErrorCode, type Logger } from "../core/errors";
+import { AgentError, ContextLimitError, toUserMessage, type ErrorCode, type Logger } from "../core/errors";
 import { markdownToHtml } from "../core/markdown";
 import { approxTokens } from "../core/tokens";
 import {
@@ -42,11 +42,21 @@ import type {
   ItemContextReader,
   ItemRef,
   NoteWriter,
-  PdfPageText,
   TagWriter,
 } from "../zotero/types";
-import { parseHighlightSuggestions, planHighlights } from "./highlights";
+import {
+  parseHighlightSuggestions,
+  planHighlights,
+  type HighlightSuggestion,
+} from "./highlights";
 import { summarizeHighlightRun } from "./highlightSummary";
+import {
+  calculateHighlightRequestBudget,
+  createHighlightTextWindows,
+  effectiveHighlightContextTokens,
+  rankHighlightWindows,
+  splitHighlightWindow,
+} from "./highlightContext";
 import type { WorkflowId, WorkflowResult, WorkflowResultSection } from "./types";
 
 export type WorkflowRunRequest =
@@ -223,41 +233,6 @@ function truncationNotice(composed: ComposedContext): string | undefined {
   );
 }
 
-/** Complete, bounded PDF text windows for verbatim highlighting. Pages are
- * packed while they fit; oversized pages use overlapping windows so a short
- * passage crossing a window edge remains visible in the next call. This path
- * deliberately does not depend on retrieval/index state. */
-function highlightTextChunks(pages: PdfPageText[], requestedBudget: number): string[] {
-  const budget = Math.max(2_000, requestedBudget);
-  const chunks: string[] = [];
-  let packed = "";
-  const flush = () => {
-    if (packed) chunks.push(packed);
-    packed = "";
-  };
-
-  for (const page of pages) {
-    const header = `[PDF page ${page.pageLabel || page.pageIndex + 1}]\n`;
-    const block = `${header}${page.text}`;
-    if (block.length <= budget) {
-      if (packed && packed.length + 2 + block.length > budget) flush();
-      packed += `${packed ? "\n\n" : ""}${block}`;
-      continue;
-    }
-
-    flush();
-    const contentBudget = Math.max(1_000, budget - header.length);
-    const overlap = Math.min(500, Math.floor(contentBudget / 4));
-    const step = Math.max(1, contentBudget - overlap);
-    for (let start = 0; start < page.text.length; start += step) {
-      chunks.push(`${header}${page.text.slice(start, start + contentBudget)}`);
-      if (start + contentBudget >= page.text.length) break;
-    }
-  }
-  flush();
-  return chunks;
-}
-
 /** Queries the retrieval backend for items whose PDF text exceeds the token
  * budget, one query per over-budget item so passage allocation stays fair
  * across a multi-item selection (S3-05). Items with no PDF text, or that
@@ -330,10 +305,12 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
     provider: AIProvider,
     prompt: string,
     signal: AbortSignal,
+    maxTokens?: number,
   ): Promise<string> => {
     const result = await provider.complete({
       messages: [{ role: "user", content: prompt }],
       signal,
+      ...(maxTokens !== undefined ? { maxTokens } : {}),
     });
     return result.text;
   };
@@ -403,9 +380,11 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
    * highlights. A dedicated pass prevents broad-category prompts from biasing
    * the model toward only the strongest two or three categories. Runs to
    * completion after the single user start — no per-highlight prompt (FR-047).
-   * Each item's writes commit before the next starts, so a mid-run failure
-   * leaves earlier items' created highlights valid and reports the rest
-   * (NFR-023). */
+   * Small PDFs use one maximal request per category. Oversized PDFs are
+   * exhaustively scanned in overlapping windows; local retrieval may rank
+   * those windows but never removes one. Each item's writes commit before the
+   * next starts, so a mid-run failure leaves earlier items' created highlights
+   * valid and reports the rest (NFR-023). */
   const runAutoHighlight = async (
     provider: AIProvider,
     composed: ComposedContext,
@@ -414,7 +393,10 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
     colorSemantics: ColorSemantics,
     categories: Category[],
     highlightWriter: HighlightWriter,
-    chunkCharBudget: number,
+    userContextWindowTokens: number,
+    providerContextWindowTokens: number | undefined,
+    retrieval: OrchestratorRetrievalDeps | undefined,
+    retrievalPassagesPerItem: number,
   ): Promise<WorkflowResultSection[]> => {
     for (const [index, item] of composed.items.entries()) {
       signal.throwIfAborted();
@@ -423,24 +405,51 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
       if (targets.pages.length === 0) {
         markdown = "This item has no readable PDF text, so nothing was highlighted.";
       } else {
-        const suggestions = [];
-        const textChunks = highlightTextChunks(targets.pages, chunkCharBudget);
-        const totalPasses = Math.max(1, categories.length * textChunks.length);
-        for (const [categoryIndex, category] of categories.entries()) {
-          for (const [chunkIndex, textChunk] of textChunks.entries()) {
-            signal.throwIfAborted();
-            const pass = categoryIndex * textChunks.length + chunkIndex;
-            emit({
-              type: "progress",
-              message:
-                `Highlighting "${item.title || item.ref.key}": ${category}` +
-                `${textChunks.length > 1 ? ` (${chunkIndex + 1}/${textChunks.length})` : ""}…`,
-              fraction: (index + pass / totalPasses) / composed.items.length,
-            });
+        const suggestions: HighlightSuggestion[] = [];
+        const effectiveContext = effectiveHighlightContextTokens(
+          userContextWindowTokens,
+          providerContextWindowTokens,
+        );
+        let indexed = false;
+        if (retrieval) {
+          try {
+            indexed = (await retrieval.backend.listIndexedItemKeys()).includes(item.ref.key);
+          } catch (error) {
+            deps.logger.error(
+              "listIndexedItemKeys failed; scanning highlights in document order",
+              error,
+            );
+          }
+        }
+        const windowsByCategory = new Map<
+          Category,
+          ReturnType<typeof createHighlightTextWindows>
+        >();
+        for (const category of categories) {
+          const budget = calculateHighlightRequestBudget(effectiveContext, category);
+          windowsByCategory.set(
+            category,
+            createHighlightTextWindows(targets.pages, budget.payloadChars),
+          );
+        }
+        const totalPasses = Math.max(
+          1,
+          [...windowsByCategory.values()].reduce((sum, windows) => sum + windows.length, 0),
+        );
+        let completedPasses = 0;
+
+        const scanWindow = async (
+          text: string,
+          category: Category,
+          completionTokens: number,
+        ): Promise<void> => {
+          signal.throwIfAborted();
+          try {
             const reply = await complete(
               provider,
-              composeHighlightPrompt(textChunk, [category]),
+              composeHighlightPrompt(text, [category]),
               signal,
+              completionTokens,
             );
             suggestions.push(
               ...parseHighlightSuggestions(reply).map((suggestion) => ({
@@ -448,6 +457,47 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
                 quote: suggestion.quote,
               })),
             );
+          } catch (error) {
+            const contextLimited =
+              error instanceof ContextLimitError ||
+              (error instanceof AgentError && error.code === "context-limit");
+            if (!contextLimited) throw error;
+            const split = splitHighlightWindow(text);
+            if (!split) throw error;
+            for (const half of split) await scanWindow(half, category, completionTokens);
+          }
+        };
+
+        for (const category of categories) {
+          const budget = calculateHighlightRequestBudget(effectiveContext, category);
+          let textWindows = windowsByCategory.get(category) ?? [];
+          if (indexed && retrieval && textWindows.length > 1) {
+            try {
+              const results = await retrieval.backend.query({
+                text: category,
+                itemKeys: [item.ref.key],
+                limit: retrievalPassagesPerItem,
+                mode: "hybrid",
+              });
+              textWindows = rankHighlightWindows(textWindows, results);
+            } catch (error) {
+              deps.logger.error(
+                `retrieval query failed for auto-highlight item ${item.ref.key}; scanning in document order`,
+                error,
+              );
+            }
+          }
+          for (const [chunkIndex, textWindow] of textWindows.entries()) {
+            signal.throwIfAborted();
+            emit({
+              type: "progress",
+              message:
+                `Highlighting "${item.title || item.ref.key}": ${category}` +
+                `${textWindows.length > 1 ? ` (${chunkIndex + 1}/${textWindows.length})` : ""}…`,
+              fraction: (index + completedPasses / totalPasses) / composed.items.length,
+            });
+            await scanWindow(textWindow.text, category, budget.completionTokens);
+            completedPasses += 1;
           }
         }
         const uniqueSuggestions = suggestions.filter(
@@ -542,15 +592,25 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         PREF_KEYS.contextTokenBudget,
         PREF_DEFAULTS[PREF_KEYS.contextTokenBudget] as number,
       );
+      const autoHighlightContextWindowTokens = getIntPref(
+        deps.prefs,
+        PREF_KEYS.autoHighlightContextWindowTokens,
+        PREF_DEFAULTS[PREF_KEYS.autoHighlightContextWindowTokens] as number,
+      );
+      let providerContextWindowTokens: number | undefined;
+      if (request.kind === "auto-highlight" && provider.getModelCapabilities) {
+        try {
+          providerContextWindowTokens = (
+            await provider.getModelCapabilities()
+          )?.contextWindowTokens;
+        } catch (error) {
+          deps.logger.error("model context metadata unavailable; using the configured cap", error);
+        }
+      }
       let retrievedByItem: Map<string, RetrievalResult[]> | undefined;
-      // Auto-highlight must quote passages verbatim from the text the model
-      // actually sees (planHighlights only accepts an exact substring match).
-      // Retrieval narrows that text to a handful of passages picked by a
-      // generic "<categories>" query, so an over-budget item leaves the model
-      // unable to see (and thus quote) most of the paper — it falls back to
-      // paraphrasing from memory instead, and every quote comes back
-      // unresolved. The char-budget truncation fallback in composeItemContexts
-      // gives it real, contiguous text instead.
+      // Generic workflows may replace over-budget full text with retrieved
+      // passages. Auto-highlight must not: it uses complete source windows and
+      // consults retrieval later only to rank their processing order.
       if (
         deps.retrieval &&
         request.kind !== "auto-highlight" &&
@@ -594,7 +654,16 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
           colorSemantics,
           categories,
           deps.highlightWriter as HighlightWriter,
-          contextCharBudget,
+          autoHighlightContextWindowTokens,
+          providerContextWindowTokens,
+          deps.retrieval && getBoolPref(deps.prefs, PREF_KEYS.retrievalEnabled, true)
+            ? deps.retrieval
+            : undefined,
+          getIntPref(
+            deps.prefs,
+            PREF_KEYS.retrievalPassagesPerItem,
+            PREF_DEFAULTS[PREF_KEYS.retrievalPassagesPerItem] as number,
+          ),
         );
       } else {
         sections = await runPerItem(

@@ -17,6 +17,10 @@ pref("extensions.zotero-agent.provider.openaiCompatible.model", "");
 // Request timeout for provider HTTP calls, in milliseconds.
 pref("extensions.zotero-agent.provider.requestTimeoutMs", 300000);
 
+// Maximum model context auto-highlighting may use. A lower provider-reported
+// context window takes precedence.
+pref("extensions.zotero-agent.autoHighlight.contextWindowTokens", 65536);
+
 // JSON-serialized color-to-category mapping; empty means built-in defaults.
 pref("extensions.zotero-agent.colorSemantics", "");
 

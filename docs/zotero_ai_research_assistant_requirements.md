@@ -275,8 +275,13 @@ Das System ist eine Erweiterung innerhalb von Zotero. Es nutzt Zotero-Dokumente,
 | FR-103 | Detailed | The system shall detect plugin-created highlight fallbacks with invalid or missing text geometry and retry them as positioned highlights when usable PDF reader geometry becomes available. |
 | FR-104 | Detailed | The system shall remove a broken fallback annotation only after its replacement highlight has been saved successfully. |
 | FR-105 | Detailed | The system shall preserve a fallback annotation when repair geometry is unavailable or replacement creation fails. |
-| FR-106 | Detailed | The system shall cover the complete PDF during auto-highlighting by processing bounded overlapping page-text chunks without depending on retrieval-index membership. |
+| FR-106 | Detailed | The system shall cover the complete PDF during auto-highlighting: send it whole when it fits the effective context budget, otherwise process exhaustive page-labelled windows with at least 500 characters of overlap at every boundary. |
 | FR-107 | Detailed | The system shall not report auto-highlight text chunking as a missing-index or background-indexing condition. |
+| FR-108 | Detailed | The system shall use the lower of provider-reported model context capacity and the user-configured auto-highlight context cap, defaulting the user cap to 65,536 tokens when provider metadata is absent. |
+| FR-109 | Detailed | The system shall subtract category-specific prompt overhead, completion and reasoning reserves, and a token-estimation safety margin before allocating PDF text, and shall set the provider completion limit to the reserved output size. |
+| FR-110 | Detailed | For oversized indexed PDFs, category-specific local retrieval may prioritize matching PDF windows but shall not omit or duplicate any window; unavailable indexing or retrieval failure shall fall back to exhaustive document order. |
+| FR-111 | Detailed | The system shall parse common provider model context fields including `context_length`, `max_context_length`, `max_model_len`, and `context_window` without breaking providers that only implement model listing. |
+| FR-112 | Detailed | When a provider explicitly rejects a window for exceeding context size, the system shall split only that failed window with overlap and retry; other provider failures shall not trigger splitting. |
 
 ### 7.5 Notizgenerierung und Notizzusammenfassung
 
@@ -697,7 +702,7 @@ Das System ist eine Erweiterung innerhalb von Zotero. Es nutzt Zotero-Dokumente,
 | Ziel | Abgedeckt durch Anforderungen |
 |---|---|
 | Bessere Auffindbarkeit von Annotationen | FR-003, FR-005, FR-006, FR-008, FR-091 |
-| Automatische Markierungen | FR-004, FR-041 bis FR-048, FR-102 bis FR-107 |
+| Automatische Markierungen | FR-004, FR-041 bis FR-048, FR-102 bis FR-112 |
 | Farbsemantik | FR-002, FR-023 bis FR-031 |
 | Notizen aus Markierungen | FR-005, FR-049 bis FR-056 |
 | Tags | FR-007, FR-057 bis FR-064 |

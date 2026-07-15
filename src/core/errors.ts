@@ -9,6 +9,7 @@ export type ErrorCode =
   | "auth-failed"
   | "model-not-found"
   | "provider-response"
+  | "context-limit"
   | "unknown";
 
 export class AgentError extends Error {
@@ -58,6 +59,15 @@ export class ProviderResponseError extends AgentError {
   }
 }
 
+/** The provider rejected a request specifically because its context window
+ * was exceeded. Workflows may safely retry a smaller input only for this
+ * typed failure. */
+export class ContextLimitError extends AgentError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super("context-limit", message, options);
+  }
+}
+
 /** Map any error to a plain-language message safe to show in the UI
  * (EIR-014, NFR-013). Never includes stack traces or secrets. */
 export function toUserMessage(error: unknown): string {
@@ -78,6 +88,7 @@ export function toUserMessage(error: unknown): string {
           ? error.message
           : "The configured model was not found on this endpoint.";
       case "provider-response":
+      case "context-limit":
       case "unknown":
         return "The AI service returned an unexpected response.";
     }

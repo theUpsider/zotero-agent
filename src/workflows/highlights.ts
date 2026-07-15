@@ -216,6 +216,41 @@ function locate(pages: NormalizedPage[], quote: string): Location | null {
   return locateWithNormalization(pages, quote, true);
 }
 
+/** Resolve a quote that starts on one page and continues on the next. Zotero
+ * highlights are page-local, so the caller receives one location per page.
+ * Normalizing the joined original text preserves line-hyphen repair across the
+ * page break (for example "state-of-the-" / "art"). */
+function locateAcrossPageBoundary(
+  pages: NormalizedPage[],
+  quote: string,
+): [Location, Location] | null {
+  const attempts = [false, true].filter(
+    (ignoreHyphens) =>
+      !ignoreHyphens || normalize(quote).text.replace(/\s/g, "").length >= 40,
+  );
+  for (let pagePosition = 0; pagePosition < pages.length - 1; pagePosition++) {
+    const first = pages[pagePosition] as NormalizedPage;
+    const second = pages[pagePosition + 1] as NormalizedPage;
+    const boundary = first.text.length;
+    const joined = `${first.text}\n${second.text}`;
+    for (const ignoreHyphens of attempts) {
+      const haystack = normalize(joined, ignoreHyphens);
+      const needle = normalize(quote, ignoreHyphens).text;
+      const at = haystack.text.indexOf(needle);
+      if (at === -1) continue;
+      const originalStart = haystack.map[at] as number;
+      const originalEnd = haystack.map[at + needle.length] as number;
+      if (originalStart >= boundary || originalEnd <= boundary + 1) continue;
+      const firstText = first.text.slice(originalStart);
+      const secondText = second.text.slice(0, originalEnd - boundary - 1);
+      const firstLocation = locate([first], firstText);
+      const secondLocation = locate([second], secondText);
+      if (firstLocation && secondLocation) return [firstLocation, secondLocation];
+    }
+  }
+  return null;
+}
+
 interface NormalizedPage {
   pageIndex: number;
   pageLabel: string;
@@ -294,7 +329,30 @@ export function planHighlights(
     }
     const found = locate(normalizedPages, suggestion.quote);
     if (!found) {
-      unresolved.push({ ...suggestion, reason: "not-found" });
+      const acrossPages = locateAcrossPageBoundary(normalizedPages, suggestion.quote);
+      if (!acrossPages) {
+        unresolved.push({ ...suggestion, reason: "not-found" });
+        continue;
+      }
+      const spans = acrossPages.map((location) => ({
+        pageIndex: location.pageIndex,
+        start: location.normStart,
+        end: location.normEnd,
+      }));
+      if (spans.some((span) => overlapsAny(span, taken, threshold))) {
+        unresolved.push({ ...suggestion, reason: "duplicate" });
+        continue;
+      }
+      taken.push(...spans);
+      planned.push(
+        ...acrossPages.map((location) => ({
+          pageIndex: location.pageIndex,
+          pageLabel: location.pageLabel,
+          category: suggestion.category,
+          color,
+          text: location.text,
+        })),
+      );
       continue;
     }
     const span: Span = { pageIndex: found.pageIndex, start: found.normStart, end: found.normEnd };

@@ -79,12 +79,12 @@ flowchart TB
 | §15.2 component | Module | Key contract | Built in |
 |---|---|---|---|
 | Zotero Adapter | `src/zotero/adapter.ts`, `src/zotero/types.ts` | plain item context; annotation keys; open-reader char geometry; fallback detection/repair; only module touching `Zotero` global | S2-01, S2-06, S4-05, S5-02 |
-| AI Provider Manager | `src/providers/` (registry + impls) | `AIProvider` (`validateConfig`, `complete`) in `src/providers/types.ts` | S1-01, S1-03 |
+| AI Provider Manager | `src/providers/` (registry + impls) | `AIProvider` (`validateConfig`, `complete`, optional `listModels` / `getModelCapabilities`) in `src/providers/types.ts`; common context-window metadata parsed without requiring it | S1-01, S1-03, S5-01 |
 | Prompt Manager | `src/prompts/templates.ts`, composer | template render + `{{context}}` assembly under token budget | S2-03, S3-05 |
 | Color Semantics Manager | `src/core/colorSemantics.ts` | pure mapping + (de)serialization; already implemented | S1-07 (UI) |
 | Local Index Manager | `src/retrieval/` (index manager, chunker, embeddings) | enqueue/throttle, rebuild, schema versioning | S3-02/03/06/07 |
 | Retrieval Engine | `RetrievalBackend` impl | `indexItem` / `removeItem` / `query` / `rebuild` in `src/retrieval/types.ts` | S3-01, S3-04 |
-| Workflow Orchestrator | `src/workflows/` | `Workflow.run(context, onProgress)` in `src/workflows/types.ts` | S2-02 |
+| Workflow Orchestrator | `src/workflows/` | workflow run/progress plus maximal auto-highlight context packing, exhaustive window coverage, RAG ordering, and context-limit retry | S2-02, S5-01/02 |
 | Result Renderer | `src/ui/resultView` | progress events in, markdown out, save-as-note action | S2-05 |
 | Persistence Manager | `src/core/config.ts` + credential store | `PREF_KEYS`, typed pref helpers, secure key storage | S1-02, S1-04 |
 | Error/Status Manager | `src/core/errors.ts` | typed error → user message, `redact()`, namespaced log | S1-09 |

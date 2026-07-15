@@ -44,7 +44,7 @@ Sizes are rough t-shirt estimates (S ≈ ≤1 day, M ≈ 2–3 days, L ≈ 4+ da
 | [2](sprint-2.md) | Zotero access & first end-to-end workflow | Select items → run template or free prompt → see result → save as Zotero note | FR-009, FR-010, FR-035/036, FR-080…FR-098, EIR-001…EIR-004, BR-001 |
 | [3](sprint-3.md) | Local index & retrieval (RAG) | Index builds/updates automatically and locally; retrieval feeds prompt context; rebuild works | FR-008, FR-065…FR-079, EIR-015…EIR-018, DAR-003/004/005, NFR-007…NFR-010 |
 | [4](sprint-4.md) | Scholarly workflows: analysis, notes, tags | Category-structured paper analysis, note generation/summarization, tag suggestion+write on multi-selection | FR-003, FR-005, FR-006, FR-007, FR-032…FR-040, FR-049…FR-064 |
-| [5](sprint-5.md) | Auto-highlighting, offline, release | Per-category/full-PDF chunk passes create highlights; broken fallbacks repair transactionally; offline paths verified | FR-004, FR-041…FR-048, FR-102…FR-107, EIR-005, NFR-028…NFR-032 |
+| [5](sprint-5.md) | Auto-highlighting, offline, release | Maximal-context per-category passes create highlights with exhaustive oversized-PDF coverage; broken fallbacks repair transactionally; offline paths verified | FR-004, FR-041…FR-048, FR-102…FR-112, EIR-005, NFR-028…NFR-032 |
 
 ## Cross-cutting requirements (every sprint)
 
@@ -73,7 +73,7 @@ These are architectural invariants enforced continuously, not backlog items:
 | FR-003, FR-032…FR-040 (paper analysis) | 4 |
 | FR-005, FR-006, FR-049…FR-056 (notes) | 4 (save-note plumbing already in 2) |
 | FR-007, FR-057…FR-064 (tags) | 4 |
-| FR-004, FR-041…FR-048, FR-102…FR-107 (auto-highlights + repair) | 5 (feasibility spike in 2) |
+| FR-004, FR-041…FR-048, FR-102…FR-112 (auto-highlights + repair) | 5 (feasibility spike in 2) |
 | EIR-001…EIR-006 (Zotero interface) | 2 (EIR-005 in 5) |
 | EIR-007…EIR-014 (provider interface) | 1 |
 | EIR-015…EIR-018 (retrieval interface) | 3 |

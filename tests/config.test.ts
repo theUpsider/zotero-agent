@@ -63,4 +63,8 @@ describe("pref helpers", () => {
   it("allows slow reasoning models five minutes by default", () => {
     expect(PREF_DEFAULTS[PREF_KEYS.requestTimeoutMs]).toBe(300_000);
   });
+
+  it("caps auto-highlight context at 64K tokens by default", () => {
+    expect(PREF_DEFAULTS[PREF_KEYS.autoHighlightContextWindowTokens]).toBe(65_536);
+  });
 });

@@ -182,6 +182,37 @@ describe("planHighlights", () => {
     ]);
   });
 
+  it("resolves a compound-hyphen passage across a PDF page boundary", () => {
+    const pages: PdfPageText[] = [
+      {
+        pageIndex: 0,
+        pageLabel: "10",
+        text: "The system achieves state-of-the-",
+      },
+      {
+        pageIndex: 1,
+        pageLabel: "11",
+        text: "art performance across every benchmark in the evaluation suite.",
+      },
+    ];
+    const { planned, unresolved } = planHighlights(
+      [
+        {
+          category: "results",
+          quote:
+            "The system achieves state-of-theart performance across every benchmark in the evaluation suite.",
+        },
+      ],
+      pages,
+      semantics,
+      [],
+    );
+    expect(unresolved).toEqual([]);
+    expect(planned.map((highlight) => highlight.pageIndex)).toEqual([0, 1]);
+    expect(planned[0]?.text).toContain("state-of-the-");
+    expect(planned[1]?.text).toContain("art performance");
+  });
+
   it("reports a category with no mapped color", () => {
     const { planned, unresolved } = planHighlights(
       [{ category: "unmapped-category", quote: "novel method" }],
