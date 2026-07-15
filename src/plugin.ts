@@ -18,6 +18,7 @@ import { defaultReranker } from "./retrieval/rerank";
 import { createSettingsApi, type SettingsApi } from "./ui/settingsApi";
 import { createWorkflowUiApi, type NamedWorkflowMode, type WorkflowUiApi } from "./ui/workflowApi";
 import {
+  createHighlightWriter,
   createItemContextReader,
   createNoteWriter,
   createTagWriter,
@@ -50,6 +51,7 @@ interface DevApi {
 /** Named scholarly workflows in menu order (S4-07). */
 const NAMED_WORKFLOWS: { mode: NamedWorkflowMode; label: string }[] = [
   { mode: "analyze-papers", label: "Analyze papers" },
+  { mode: "auto-highlight", label: "Highlight paper" },
   { mode: "generate-notes", label: "Generate note from annotations" },
   { mode: "summarize-notes", label: "Summarize notes" },
   { mode: "suggest-tags", label: "Suggest tags" },
@@ -117,6 +119,7 @@ export class ZoteroAgentPlugin {
       reader,
       noteWriter: createNoteWriter(logger),
       tagWriter: createTagWriter(logger),
+      highlightWriter: createHighlightWriter(logger),
       prefs,
       logger,
       ...(indexManager

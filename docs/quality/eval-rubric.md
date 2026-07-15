@@ -51,3 +51,45 @@ should not lower any dimension without a documented reason.
 > **Status:** rubric and sheet defined (S4-08). Baseline scores are filled in by
 > running the workflow against a live provider in a Zotero profile — a manual
 > step that cannot run in the build/CI environment.
+
+## Highlight quality (S5-07, OP-009)
+
+Applies to the **Highlight paper** workflow. Score each fixture 1–5 per
+dimension (5 best):
+
+1. **Span precision** — highlighted spans cover the intended passage exactly:
+   not truncated mid-clause, not over-extended into neighbouring sentences
+   (FR-042/FR-043). Passages reported as "could not locate" count against this.
+2. **Category correctness** — each highlight's color matches the passage's true
+   category per the color mapping; multi-category passages take the most
+   relevant color (FR-044/FR-045).
+3. **Coverage** — the notable passages a researcher would highlight are found,
+   without flooding the page with low-value highlights (precision over recall).
+4. **Non-duplication** — a re-run and existing user highlights produce no
+   overlapping duplicates (FR-046); verified via smoke test 20.
+
+| # | Span precision | Category correctness | Coverage | Non-duplication | Reviewer / date |
+|---|----------------|----------------------|----------|-----------------|-----------------|
+| 1 | | | | | |
+| 2 | | | | | |
+| 3 | | | | | |
+
+### Acceptance thresholds (release gate)
+
+Agreed "good enough for release" bar for the highlight workflow, averaged over
+the fixture set:
+
+- **Category correctness ≥ 4** — miscolored highlights mislead the reader, so
+  this is the hard gate; a single systematic miscategorization blocks release.
+- **Span precision ≥ 3.5** and **Coverage ≥ 3** — some imprecise or missed
+  spans are acceptable for an assistive feature the user can edit.
+- **Non-duplication = 5** — non-negotiable: a re-run must never double-highlight
+  (data-quality issue, not a taste issue).
+
+A fixture falling below any threshold is recorded with a note; release proceeds
+only when the fixture-set averages meet the bar or the shortfall is consciously
+accepted and documented here.
+
+> **Status:** rubric and thresholds defined (S5-07). Baseline highlight scores
+> are filled in by running **Highlight paper** against a live provider on the
+> fixture papers — a manual step outside CI.

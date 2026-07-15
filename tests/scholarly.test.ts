@@ -1,12 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
   composeAnalysisPrompt,
+  composeHighlightPrompt,
   composeNoteFromAnnotationsPrompt,
   composeSummarizeNotesPrompt,
   composeTagSuggestionPrompt,
   NO_EVIDENCE,
   parseTagSuggestions,
 } from "../src/prompts/scholarly";
+
+describe("composeHighlightPrompt (S5-01)", () => {
+  it("lists the configured categories and demands verbatim JSON output", () => {
+    const prompt = composeHighlightPrompt("CONTEXT", ["methodology", "results"]);
+    expect(prompt).toContain("- methodology");
+    expect(prompt).toContain("- results");
+    expect(prompt).toContain("VERBATIM");
+    expect(prompt).toContain("JSON array");
+    expect(prompt).toContain('"quote"');
+    expect(prompt).toContain("most relevant");
+    expect(prompt).toContain("CONTEXT");
+  });
+});
 
 describe("composeAnalysisPrompt (S4-01/S4-02)", () => {
   it("lists the configured categories as headings and demands the no-evidence marker", () => {

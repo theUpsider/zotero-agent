@@ -19,6 +19,7 @@ import type { ItemRef } from "../zotero/types";
  * generic ones (template / free-prompt). */
 export type NamedWorkflowMode =
   | "analyze-papers"
+  | "auto-highlight"
   | "generate-notes"
   | "summarize-notes"
   | "suggest-tags";

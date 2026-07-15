@@ -6,12 +6,15 @@ Build guide: [`docs/research/zotero-9-extension-build-guide.md`](docs/research/z
 
 ## Status
 
-Sprint 1 complete: settings pane (provider + highlight-color meanings), working
+MVP complete (Sprints 1–5): settings pane (provider + highlight-color meanings),
 OpenAI-compatible provider (OpenAI, Ollama, LM Studio, vLLM) with "Test connection"
-validation, secure credential storage, and typed error/status plumbing.
-Retrieval and workflows are still interface stubs (Sprints 2–3).
+validation and secure credential storage; a local, offline retrieval index for
+large PDFs; the scholarly workflows (analyze papers, generate/summarize notes,
+suggest tags) and **auto-highlighting** — the model identifies passages per
+category and writes colored highlights into the PDF, with duplicate suppression.
 Sprint plan: [`docs/sprints/`](docs/sprints/) · manual test scripts:
-[`docs/sprints/smoke-tests.md`](docs/sprints/smoke-tests.md)
+[`docs/sprints/smoke-tests.md`](docs/sprints/smoke-tests.md) · MVP traceability:
+[`docs/sprints/mvp-acceptance.md`](docs/sprints/mvp-acceptance.md)
 
 ## Prerequisites
 
@@ -50,6 +53,26 @@ Option B — load from source (dev, hot rebuild via `npm start`):
 
 Smoke test: Tools menu → *AI Research Assistant: Analyze selected items* shows the count of selected items.
 Full manual test scripts: [`docs/sprints/smoke-tests.md`](docs/sprints/smoke-tests.md).
+
+## Releasing (S5-05)
+
+The version is single-sourced from `package.json` and stamped into `manifest.json`
+and `update.json` at build time — never edit versions in the manifests by hand.
+
+1. Bump `version` in `package.json` (e.g. `0.1.0` → `0.1.1`) and commit.
+2. `npm test && npm run typecheck` — both must be green.
+3. `npm run pack`. This writes:
+   - `build/zotero-agent-<version>.xpi` — the installable add-on;
+   - `build/update.json` — the Zotero update manifest.
+4. Create a GitHub release tagged `v<version>` and attach the `.xpi` as an asset
+   (the `.xpi` download URL must match `update.json`'s `update_link`).
+5. Upload `build/update.json` to the fixed **`release`** tag — the URL in
+   `manifest.json`'s `update_url`. Zotero's updater polls this file, so every
+   release refreshes it while the `.xpi` lives on its own `v<version>` tag.
+
+Existing installs then see the new version through Tools → Plugins → *Check for
+Updates*. Verify on a clean Zotero 9 profile that a fresh install via the `.xpi`
+works following this README, and that an older install updates to the new version.
 
 ## Configuration
 

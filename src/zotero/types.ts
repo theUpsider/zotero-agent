@@ -59,6 +59,72 @@ export interface NoteWriter {
   createChildNote(ref: ItemRef, html: string): Promise<{ noteKey: string }>;
 }
 
+/** One PDF page's extracted text as the adapter hands it to the pure
+ * highlight resolver (S5-01). `pageIndex` is 0-based (position coordinate
+ * space); `pageLabel` is what the reader shows (e.g. "3", "iv"). */
+export interface PdfPageText {
+  pageIndex: number;
+  pageLabel: string;
+  text: string;
+}
+
+/** An existing highlight already on the PDF — user- or previously plugin-
+ * created (FR-046). Text + page only; the resolver locates its span for the
+ * overlap test so re-runs never double-highlight (S5-03). */
+export interface ExistingHighlight {
+  pageIndex: number;
+  text: string;
+}
+
+/** A resolved, colored, deduplicated passage ready for the writer to draw
+ * (S5-02). `text` is the exact page substring matched — the writer maps it to
+ * PDF glyph rects (the only geometry step that needs Zotero). */
+export interface PlannedHighlight {
+  pageIndex: number;
+  pageLabel: string;
+  category: string;
+  /** Hex color mapped from the category via the color semantics (FR-044). */
+  color: string;
+  text: string;
+}
+
+/** What the writer read for one item: page text to resolve quotes against and
+ * the highlights already present for duplicate suppression (S5-02/S5-03). */
+export interface HighlightTargets {
+  pages: PdfPageText[];
+  existing: ExistingHighlight[];
+}
+
+/** A highlight the writer actually created, echoed back for the result
+ * summary (S5-02 AC#4). `kind` is "highlight" for a real colored highlight, or
+ * "note" for the committed fallback (a page-level note annotation) when a
+ * passage's glyph rects could not be computed (S2-08 re-scope guard). */
+export interface CreatedHighlight {
+  pageIndex: number;
+  pageLabel: string;
+  category: string;
+  color: string;
+  text: string;
+  kind: "highlight" | "note";
+}
+
+export interface HighlightWriteResult {
+  created: CreatedHighlight[];
+  /** Planned highlights that could not be drawn (e.g. glyph rects not found);
+   * reported, never silently dropped (NFR-023). */
+  failed: { text: string; reason: string }[];
+}
+
+/** Write seam for auto-highlighting (S5-02; FR-004, FR-044, FR-047, FR-048,
+ * EIR-005). Reads the PDF's page text + existing highlights, then draws the
+ * resolved passages as ordinary Zotero highlight annotations at the mapped
+ * color. Runs to completion after a single user start — no per-highlight
+ * prompt (FR-047). Never touches collections or item locations (EIR-006). */
+export interface HighlightWriter {
+  readTargets(ref: ItemRef): Promise<HighlightTargets>;
+  createHighlights(ref: ItemRef, planned: PlannedHighlight[]): Promise<HighlightWriteResult>;
+}
+
 /** Write seam for subject tags (S4-05). Adds tags to an item, skipping
  * case-insensitive duplicates (FR-064); returns the tags actually added so
  * the result view can report them. Never touches collections or item

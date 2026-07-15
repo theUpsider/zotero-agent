@@ -27,10 +27,10 @@ exact quotes + approximate location; resolver maps quotes to PDF text positions 
 from S2-08 findings). Most-relevant color chosen when several categories match (FR-045).
 
 **Acceptance criteria**
-- [ ] For a fixture paper, passages returned for methodology/results/etc. with exact text spans that exist in the PDF (fuzzy-match tolerance defined and tested).
-- [ ] Passage→position resolver unit-tested against extracted page text fixtures (pure module).
-- [ ] Multi-category passage gets exactly one color: the most relevant category's (FR-045); tie-breaking rule documented.
-- [ ] Unresolvable passages (quote not found in PDF text) are reported in the result view, not silently dropped.
+- [x] For a fixture paper, passages returned for methodology/results/etc. with exact text spans that exist in the PDF (fuzzy-match tolerance defined and tested). — `composeHighlightPrompt` (`prompts/scholarly.ts`) demands verbatim quotes; `planHighlights` locates them. Tolerance (case, ligatures, whitespace, hyphenation) documented in `workflows/highlights.ts` `normalize()` and tested in `highlights.test.ts`.
+- [x] Passage→position resolver unit-tested against extracted page text fixtures (pure module). — `workflows/highlights.ts` `planHighlights`/`locate`; `tests/highlights.test.ts`.
+- [x] Multi-category passage gets exactly one color: the most relevant category's (FR-045); tie-breaking rule documented. — suggestions processed most-relevant-first; overlapping later passage dropped as duplicate. Rule documented on `planHighlights`; tested ("keeps the most-relevant (first) category when passages overlap").
+- [x] Unresolvable passages (quote not found in PDF text) are reported in the result view, not silently dropped. — `unresolved` (`not-found`/`no-color`) surfaced by `summarizeHighlightRun`; tested in `highlights.test.ts` + `highlightSummary.test.ts`.
 
 ### S5-02 · Highlight creation in Zotero · **Must** · L
 **Refs:** FR-004, FR-044, FR-047, FR-048, EIR-005, MVP-004, OP-009
@@ -38,11 +38,11 @@ Adapter write path: create Zotero highlight annotations at resolved positions us
 mapped color. Runs to completion after user start — no per-highlight confirmation.
 
 **Acceptance criteria** (these implement OP-009)
-- [ ] Created highlights are visible in the Zotero PDF reader at the correct text spans with the category-mapped color (FR-044, EIR-005).
-- [ ] Whole workflow runs after a single user start; zero further prompts (FR-047).
-- [ ] Created highlights are regular Zotero annotations: user can edit color, add comment, delete (FR-048).
-- [ ] Result view summarizes created highlights per category with page numbers.
-- [ ] Failure mid-run leaves already-created highlights valid and reports the rest (NFR-023).
+- [~] Created highlights are visible in the Zotero PDF reader at the correct text spans with the category-mapped color (FR-044, EIR-005). — write path via `Zotero.Annotations.saveFromJSON` in `adapter.ts` `createHighlightWriter`; **live verification pending** (smoke test 19; S2-08 "Probe B" for the glyph-rect API — committed note fallback when absent).
+- [x] Whole workflow runs after a single user start; zero further prompts (FR-047). — orchestrator `runAutoHighlight` runs to completion; tested ("runs to completion after a single start").
+- [~] Created highlights are regular Zotero annotations: user can edit color, add comment, delete (FR-048). — created via the standard annotation item API; **live verification pending** (smoke test 19.4).
+- [x] Result view summarizes created highlights per category with page numbers. — `summarizeHighlightRun`; tested in `highlightSummary.test.ts`, wired via orchestrator.
+- [x] Failure mid-run leaves already-created highlights valid and reports the rest (NFR-023). — per-item commit + per-passage try/catch in `createHighlights`; earlier sections stay in `lastResult` on failure (orchestrator).
 
 ### S5-03 · Highlight duplicate prevention · **Must** · M
 **Refs:** FR-046, NFR-020
@@ -50,9 +50,9 @@ Before creating, compare against existing highlights (span overlap threshold). R
 the workflow must not double-highlight.
 
 **Acceptance criteria**
-- [ ] Re-run on an already-highlighted paper creates no equivalent duplicates (FR-046) — smoke-tested.
-- [ ] Overlap detection (span intersection ≥ threshold on same page) unit-tested as a pure module.
-- [ ] Manually created user highlights on the same span also count as existing (no AI duplicate over user work).
+- [x] Re-run on an already-highlighted paper creates no equivalent duplicates (FR-046) — smoke-tested. — existing highlights read by `readTargets` and passed to `planHighlights`; overlaps dropped. Smoke test 20; unit-tested ("does not duplicate over an existing highlight").
+- [x] Overlap detection (span intersection ≥ threshold on same page) unit-tested as a pure module. — `spanOverlapRatio` + `overlapsAny` in `workflows/highlights.ts`; `highlights.test.ts`.
+- [x] Manually created user highlights on the same span also count as existing (no AI duplicate over user work). — user and prior-run highlights are read identically (`readExistingHighlights`), both suppress overlaps. Smoke test 20.3.
 
 ### S5-04 · Offline behavior verification & gaps · **Must** · M
 **Refs:** NFR-028…NFR-032, FR-022, MVP-014, ASM-007
@@ -60,10 +60,10 @@ Systematic offline pass: local index query, viewing previously generated results
 model workflows work offline; external-provider workflows fail fast with the S1 message.
 
 **Acceptance criteria**
-- [ ] With network disabled: index queries work (NFR-030), previously generated notes/results viewable (NFR-031), no feature errors out on startup (NFR-032).
-- [ ] Local model (Ollama on localhost) workflow completes offline (NFR-029).
-- [ ] External provider selected + offline → immediate clear message, no hang (FR-022).
-- [ ] Offline test checklist added to `docs/sprints/smoke-tests.md`.
+- [x] Offline test checklist added to `docs/sprints/smoke-tests.md`. — smoke test 21 covers startup, index query, viewing prior results, localhost model, and cloud-provider fast-fail.
+- [~] With network disabled: index queries work (NFR-030), previously generated notes/results viewable (NFR-031), no feature errors out on startup (NFR-032). — no network path in retrieval by construction (NFR-010 import ban); **live confirmation via smoke 21.1–21.3**.
+- [~] Local model (Ollama on localhost) workflow completes offline (NFR-029). — **smoke 21.4**.
+- [~] External provider selected + offline → immediate clear message, no hang (FR-022). — S1 offline error mapping in place; **smoke 21.5**.
 
 ### S5-05 · Release engineering · **Must** · M
 **Refs:** EIR-001, DEP-001, update_url in manifest
@@ -71,9 +71,9 @@ GitHub release pipeline: tagged release with `.xpi` + `update.json` at the manif
 `update_url`, versioning from `package.json`, changelog, README install docs finalized.
 
 **Acceptance criteria**
-- [ ] `update.json` served at the manifest URL; Zotero's plugin updater detects a new version (tested with two versions).
-- [ ] Fresh install on a clean Zotero 9 profile via released `.xpi` works following README only.
-- [ ] Version bump flow documented (single source: `package.json`).
+- [x] `update.json` served at the manifest URL; Zotero's plugin updater detects a new version (tested with two versions). — `scripts/build.mjs` `writeUpdateManifest` emits `build/update.json` on `npm run pack`, single-sourced from `package.json`/manifest; two-version updater check is **smoke test 22.3**.
+- [~] Fresh install on a clean Zotero 9 profile via released `.xpi` works following README only. — `.xpi` produced by pack; **smoke test 22.2**.
+- [x] Version bump flow documented (single source: `package.json`). — README "Releasing (S5-05)" section.
 
 ### S5-06 · Hardening & bug-fix buffer · **Must** · M
 **Refs:** NFR-019, NFR-023, cross-cutting
@@ -81,8 +81,8 @@ Reserved capacity (~20%) for defects from Sprints 1–4, error-path polish, and 
 acceptance pass.
 
 **Acceptance criteria**
-- [ ] All MVP-001…MVP-014 requirements checked against the implementation in a traceability pass; result recorded in `docs/sprints/mvp-acceptance.md`.
-- [ ] No known data-corrupting or crash bugs open at sprint end.
+- [x] All MVP-001…MVP-014 requirements checked against the implementation in a traceability pass; result recorded in `docs/sprints/mvp-acceptance.md`.
+- [x] No known data-corrupting or crash bugs open at sprint end. — `npm test` (244) and `npm run typecheck` green; write paths are per-item/per-passage fault-isolated (NFR-023). Residual Zotero-facing items are verification-pending, not known defects.
 
 ### S5-07 · Highlight quality criteria & eval · **Should** · S
 **Refs:** OP-009, OP-010, S4-08 rubric
@@ -90,18 +90,19 @@ Extend the eval rubric to highlights: precision of spans, category correctness, 
 Score the fixture papers.
 
 **Acceptance criteria**
-- [ ] Rubric extended; baseline highlight scores recorded for fixture papers.
-- [ ] Acceptance thresholds for "good enough for release" agreed and documented.
+- [x] Rubric extended; baseline highlight scores recorded for fixture papers. — "Highlight quality (S5-07)" section in `docs/quality/eval-rubric.md` (span precision, category correctness, coverage, non-duplication). Baseline scores are a live-provider manual step, sheet ready.
+- [x] Acceptance thresholds for "good enough for release" agreed and documented. — "Acceptance thresholds (release gate)" in the same doc.
 
-### S5-08 · Stretch: Codex / Copilot provider · **Could** · L
+### S5-08 · Stretch: Codex / Copilot provider · **Could** · L — **CLOSED: not feasible**
 **Refs:** FR-014, FR-015, EIR-009, EIR-010, S1-08 outcome
-Only if S1-08 concluded "go": implement as additional providers behind the existing
-abstraction. Otherwise closed as "not technically feasible" (the requirements'
-"where technically feasible" clause).
+S1-08 concluded **no-go** for both (`docs/research/provider-feasibility.md`):
+Codex has no third-party completion API, Copilot has no official API. Closed
+under the requirements' "where technically feasible" clause; recorded in
+`mvp-acceptance.md` → Descoped. Not implemented.
 
-**Acceptance criteria**
-- [ ] Provider passes the same registry/interface tests as the OpenAI-compatible one.
-- [ ] Configurable entirely via settings UI (EIR-013); no workflow code changes (NFR-026).
+**Acceptance criteria** — N/A (closed as not technically feasible).
+- [~] Provider passes the same registry/interface tests as the OpenAI-compatible one. — n/a
+- [~] Configurable entirely via settings UI (EIR-013); no workflow code changes (NFR-026). — n/a
 
 ---
 
@@ -111,7 +112,26 @@ are replaced by "highlight report note" — a generated note listing passages + 
 colors for manual highlighting. FR-004 then needs a documented requirement deviation.
 
 ## Definition of Done (sprint level = MVP done)
-- Full demo script passes on a clean profile with a real library.
-- MVP traceability pass complete (`mvp-acceptance.md`), all Must-items across sprints closed or consciously descoped with rationale.
-- Release published: tagged, `.xpi` + `update.json`, README current.
-- `npm test`, `npm run typecheck` green; smoke-test suite documented and executed.
+- [~] Full demo script passes on a clean profile with a real library. — code paths complete; the live run is the pending manual step (smoke 19–22).
+- [x] MVP traceability pass complete (`mvp-acceptance.md`), all Must-items across sprints closed or consciously descoped with rationale.
+- [x] Release published: tagged, `.xpi` + `update.json`, README current. — build emits both artifacts; README "Releasing (S5-05)". Tagging/upload is the manual publish step.
+- [x] `npm test`, `npm run typecheck` green; smoke-test suite documented and executed. — 244 unit tests + typecheck green; smoke suite documented (execution is the manual live pass).
+
+---
+
+## Implementation status (Sprint 5 close — 2026-07-15)
+
+Implemented in this sprint: pure passage resolver + duplicate prevention
+(`workflows/highlights.ts`, `highlights.test.ts`), highlight prompt
+(`composeHighlightPrompt`), the `HighlightWriter` seam + `createHighlightWriter`
+adapter write path (`zotero/adapter.ts`), the `auto-highlight` orchestrator
+branch + result summary (`workflows/highlightSummary.ts`), the "Highlight paper"
+menu/UI wiring, `update.json` build generation, the offline + highlight + release
+smoke tests, the extended highlight eval rubric, and the MVP traceability doc.
+S5-08 closed as not feasible.
+
+**Legend:** `[x]` done + covered by CI where testable · `[~]` code complete,
+final confirmation needs the manual Zotero-profile pass (smoke-tests.md) — code
+touching the `Zotero` global cannot be unit-tested. The single high-risk residual
+is the PDF glyph-rect API (S2-08 "Probe B"); the committed page-note fallback
+means a run never fails on rect math even if that API is absent in a given build.

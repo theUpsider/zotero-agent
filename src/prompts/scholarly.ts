@@ -27,6 +27,33 @@ export function composeAnalysisPrompt(contextText: string, categories: Category[
   );
 }
 
+/** Passage identification for auto-highlighting (S5-01; FR-041..FR-043,
+ * FR-045). Asks the model to return short verbatim quotes tagged with the most
+ * relevant category, ordered most-relevant first so the resolver's tie-break
+ * keeps the best category when passages overlap (FR-045). Verbatim quoting is
+ * mandatory — the resolver locates each quote in the extracted PDF text, so a
+ * paraphrase cannot be placed. */
+export function composeHighlightPrompt(contextText: string, categories: Category[]): string {
+  const list = categories.map((category) => `- ${category}`).join("\n");
+  return (
+    "Identify the passages in the following paper that a researcher would highlight, one per " +
+    "notable point, and assign each to the single most relevant category.\n\n" +
+    "Use only these categories:\n" +
+    `${list}\n\n` +
+    "Rules:\n" +
+    "- Quote each passage VERBATIM from the paper text — copy the exact words, do not paraphrase, " +
+    "summarize, or fix typos. A quote that is not an exact substring cannot be placed.\n" +
+    "- Keep each quote to a single sentence or clause (roughly 5–40 words).\n" +
+    "- Assign exactly one category per passage: the most relevant one. List the most important " +
+    "passages first.\n" +
+    "- Only highlight passages with clear category relevance; if the paper has none, return an " +
+    "empty array.\n\n" +
+    'Return ONLY a JSON array, each element `{ "category": "<one of the categories>", "quote": ' +
+    '"<verbatim text>" }`. No prose before or after.\n\n' +
+    `Paper content:\n${contextText}`
+  );
+}
+
 /** Structured note from an item's annotations & highlights (S4-03; FR-051..FR-053). */
 export function composeNoteFromAnnotationsPrompt(contextText: string): string {
   return (

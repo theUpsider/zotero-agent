@@ -25,6 +25,37 @@ function copyStaticFiles() {
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   manifest.version = pkg.version;
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+  return manifest;
+}
+
+/** Zotero update manifest (S5-05, DEP-001). Served at the manifest's fixed
+ * `update_url` (the `release` tag) so Zotero's updater sees a new version; the
+ * `.xpi` itself is attached to the per-version `vX.Y.Z` tag. Version and the
+ * add-on id are single-sourced from package.json / manifest.json. */
+function writeUpdateManifest(manifest) {
+  const app = manifest.applications.zotero;
+  const version = pkg.version;
+  const update = {
+    addons: {
+      [app.id]: {
+        updates: [
+          {
+            version,
+            update_link: `https://github.com/davidvfischer/zotero-agent/releases/download/v${version}/zotero-agent-${version}.xpi`,
+            applications: {
+              zotero: {
+                strict_min_version: app.strict_min_version,
+                strict_max_version: app.strict_max_version,
+              },
+            },
+          },
+        ],
+      },
+    },
+  };
+  const path = join(root, "build", "update.json");
+  writeFileSync(path, JSON.stringify(update, null, 2) + "\n");
+  return path;
 }
 
 /** onnxruntime-web's wasm binaries (bundled inside @huggingface/transformers'
@@ -56,7 +87,7 @@ const buildOptions = {
 
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
-copyStaticFiles();
+const manifest = copyStaticFiles();
 copyOnnxWasmAssets();
 
 if (watch) {
@@ -72,5 +103,7 @@ if (watch) {
     // Files must sit at the archive root (research guide §3.7).
     execFileSync("zip", ["-r", xpi, "."], { cwd: outDir, stdio: "inherit" });
     console.log(`packed ${xpi}`);
+    const updatePath = writeUpdateManifest(manifest);
+    console.log(`wrote ${updatePath}`);
   }
 }

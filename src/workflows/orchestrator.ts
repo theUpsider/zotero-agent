@@ -8,7 +8,12 @@
  * One workflow at a time; a failing item leaves earlier sections intact and
  * never writes to Zotero (NFR-023 groundwork). */
 
-import { configuredCategories, parseColorSemantics, type Category } from "../core/colorSemantics";
+import {
+  configuredCategories,
+  parseColorSemantics,
+  type Category,
+  type ColorSemantics,
+} from "../core/colorSemantics";
 import { getBoolPref, getIntPref, getStringPref, PREF_DEFAULTS, PREF_KEYS, type PrefStore } from "../core/config";
 import { AgentError, toUserMessage, type ErrorCode, type Logger } from "../core/errors";
 import { markdownToHtml } from "../core/markdown";
@@ -22,6 +27,7 @@ import {
 } from "../prompts/composer";
 import {
   composeAnalysisPrompt,
+  composeHighlightPrompt,
   composeNoteFromAnnotationsPrompt,
   composeSummarizeNotesPrompt,
   composeTagSuggestionPrompt,
@@ -30,13 +36,23 @@ import {
 import { getTemplate, PROMPT_TEMPLATES, type PromptTemplate } from "../prompts/templates";
 import type { AIProvider } from "../providers/types";
 import type { RetrievalBackend, RetrievalResult } from "../retrieval/types";
-import type { ItemContext, ItemContextReader, ItemRef, NoteWriter, TagWriter } from "../zotero/types";
+import type {
+  HighlightWriter,
+  ItemContext,
+  ItemContextReader,
+  ItemRef,
+  NoteWriter,
+  TagWriter,
+} from "../zotero/types";
+import { parseHighlightSuggestions, planHighlights } from "./highlights";
+import { summarizeHighlightRun } from "./highlightSummary";
 import type { WorkflowId, WorkflowResult, WorkflowResultSection } from "./types";
 
 export type WorkflowRunRequest =
   | { kind: "template"; templateId: string; items: ItemRef[] }
   | { kind: "free-prompt"; prompt: string; items: ItemRef[] }
   | { kind: "analyze-papers"; items: ItemRef[] }
+  | { kind: "auto-highlight"; items: ItemRef[] }
   | { kind: "generate-notes"; items: ItemRef[] }
   | { kind: "summarize-notes"; items: ItemRef[] }
   | { kind: "suggest-tags"; items: ItemRef[] };
@@ -86,6 +102,9 @@ export interface OrchestratorDeps {
   /** Required for the suggest-tags workflow (S4-05); absent = that workflow
    * fails cleanly with a config error. */
   tagWriter?: TagWriter;
+  /** Required for the auto-highlight workflow (S5-02); absent = that workflow
+   * fails cleanly with a config error. */
+  highlightWriter?: HighlightWriter;
   prefs: PrefStore;
   logger: Logger;
   retrieval?: OrchestratorRetrievalDeps;
@@ -95,6 +114,7 @@ const WORKFLOW_ID_BY_KIND: Record<WorkflowRunRequest["kind"], WorkflowId> = {
   template: "prompt-template",
   "free-prompt": "free-prompt",
   "analyze-papers": "analyze-papers",
+  "auto-highlight": "auto-highlight",
   "generate-notes": "generate-notes",
   "summarize-notes": "summarize-notes",
   "suggest-tags": "suggest-tags",
@@ -113,6 +133,7 @@ function retrievalQueryText(
     case "free-prompt":
       return request.prompt;
     case "analyze-papers":
+    case "auto-highlight":
       return categories.join(", ");
     case "generate-notes":
       return "key annotations and highlights";
@@ -163,7 +184,9 @@ function planFor(
         },
       };
     case "free-prompt":
-      throw new AgentError("invalid-config", "free-prompt has no per-item plan.");
+    case "auto-highlight":
+      // Both run on their own path (runFreePrompt / runAutoHighlight).
+      throw new AgentError("invalid-config", `${request.kind} has no per-item plan.`);
   }
 }
 
@@ -336,6 +359,60 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
     }));
   };
 
+  /** Auto-highlight (S5-02): per item, ask the model for passages, resolve them
+   * to PDF positions, and draw highlights. Runs to completion after the single
+   * user start — no per-highlight prompt (FR-047). Each item's writes commit
+   * before the next starts, so a mid-run failure leaves earlier items' created
+   * highlights valid and reports the rest (NFR-023). */
+  const runAutoHighlight = async (
+    provider: AIProvider,
+    composed: ComposedContext,
+    signal: AbortSignal,
+    sections: WorkflowResultSection[],
+    colorSemantics: ColorSemantics,
+    categories: Category[],
+    highlightWriter: HighlightWriter,
+  ): Promise<WorkflowResultSection[]> => {
+    for (const [index, item] of composed.items.entries()) {
+      signal.throwIfAborted();
+      emit({
+        type: "progress",
+        message: `Highlighting "${item.title || item.ref.key}"…`,
+        fraction: index / composed.items.length,
+      });
+      const targets = await highlightWriter.readTargets(item.ref);
+      let markdown: string;
+      if (targets.pages.length === 0) {
+        markdown = "This item has no readable PDF text, so nothing was highlighted.";
+      } else {
+        const reply = await complete(
+          provider,
+          composeHighlightPrompt(item.contextText, categories),
+          signal,
+        );
+        const suggestions = parseHighlightSuggestions(reply);
+        const { planned, unresolved } = planHighlights(
+          suggestions,
+          targets.pages,
+          colorSemantics,
+          targets.existing,
+        );
+        signal.throwIfAborted();
+        const { created, failed } = await highlightWriter.createHighlights(item.ref, planned);
+        markdown = summarizeHighlightRun({ created, unresolved, failed });
+      }
+      const section: WorkflowResultSection = {
+        ref: item.ref,
+        title: item.title,
+        markdown,
+        truncated: item.truncation !== undefined,
+      };
+      sections.push(section);
+      emit({ type: "item-completed", section });
+    }
+    return sections;
+  };
+
   const execute = async (request: WorkflowRunRequest, signal: AbortSignal): Promise<void> => {
     const workflowId = WORKFLOW_ID_BY_KIND[request.kind];
     if (request.items.length === 0) {
@@ -357,6 +434,10 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
     }
     if (request.kind === "suggest-tags" && !deps.tagWriter) {
       emit({ type: "failed", code: "invalid-config", message: "Tag writing is unavailable." });
+      return;
+    }
+    if (request.kind === "auto-highlight" && !deps.highlightWriter) {
+      emit({ type: "failed", code: "invalid-config", message: "Highlighting is unavailable." });
       return;
     }
 
@@ -406,17 +487,29 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         ...(retrievedByItem ? { retrievedByItem } : {}),
       });
 
-      const sections =
-        request.kind === "free-prompt"
-          ? await runFreePrompt(provider, request.prompt, composed, signal)
-          : await runPerItem(
-              provider,
-              composed,
-              contexts,
-              signal,
-              partialSections,
-              planFor(request, template, categories, deps.tagWriter),
-            );
+      let sections: WorkflowResultSection[];
+      if (request.kind === "free-prompt") {
+        sections = await runFreePrompt(provider, request.prompt, composed, signal);
+      } else if (request.kind === "auto-highlight") {
+        sections = await runAutoHighlight(
+          provider,
+          composed,
+          signal,
+          partialSections,
+          colorSemantics,
+          categories,
+          deps.highlightWriter as HighlightWriter,
+        );
+      } else {
+        sections = await runPerItem(
+          provider,
+          composed,
+          contexts,
+          signal,
+          partialSections,
+          planFor(request, template, categories, deps.tagWriter),
+        );
+      }
 
       const notice = truncationNotice(composed);
       const content =

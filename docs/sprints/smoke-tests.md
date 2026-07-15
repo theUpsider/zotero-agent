@@ -203,3 +203,67 @@ no jargon, no API key fragments.
 2. Trigger a rebuild (test 17) and watch the pane while it runs.
    **Expected:** progress bar and "Rebuilding — done of total" text update
    roughly once a second without reopening the pane.
+
+## Sprint 5 — auto-highlighting, offline, release
+
+### 19. Auto-highlight a paper (S5-01/S5-02; FR-004, FR-041..FR-048, EIR-005, OP-009)
+
+1. Select an item with a PDF and few/no existing highlights. Item menu (or
+   Tools) → *AI Research Assistant* → **Highlight paper**.
+2. **Expected:** the run completes after the single click — no per-highlight
+   confirmation (FR-047). The result view summarizes created highlights grouped
+   by category with page numbers (S5-02 AC#4).
+3. Open the PDF in Zotero's reader. **Expected:** colored highlights appear on
+   the quoted passages; each color matches the category→color mapping in the
+   settings pane (FR-044, EIR-005). Passages the model quoted but that could not
+   be located in the PDF text are listed in the result view, not silently
+   dropped (S5-01 AC#4).
+4. Right-click a created highlight in the reader. **Expected:** it behaves like
+   a normal Zotero annotation — you can change its color, add a comment, and
+   delete it (FR-048).
+5. If the summary reports "added as page note annotation(s)", the build's PDF
+   worker did not expose glyph geometry — record the Zotero version and note
+   this is the S2-08 "Probe B" outcome (the committed fallback baseline).
+
+### 20. Highlight duplicate prevention (S5-03; FR-046, NFR-020)
+
+1. Run **Highlight paper** on the same item again.
+2. **Expected:** no visually duplicated highlights appear; the result view
+   reports passages "skipped as already highlighted" (FR-046).
+3. Manually add your own highlight over a sentence, then run **Highlight paper**
+   once more. **Expected:** the AI does not create an overlapping highlight on
+   the span you already highlighted (no AI duplicate over user work).
+
+### 21. Offline pass (S5-04; NFR-028..032, FR-022, ASM-007)
+
+Run with the machine's network disabled (airplane mode / pull the cable).
+Record the Zotero version and date.
+
+1. **Startup offline** — restart Zotero with the plugin installed and no
+   network. **Expected:** Zotero and the plugin start with no error dialog; the
+   settings pane opens normally (NFR-032).
+2. **Index query offline** — run a free-form prompt or **Analyze papers** on a
+   large, already-indexed PDF. **Expected:** retrieval still selects passages
+   (no crash, no truncation notice) — the index is fully local (NFR-030).
+3. **View prior results offline** — reopen the result view / open notes saved
+   from an earlier run. **Expected:** previously generated notes and results are
+   viewable (NFR-031).
+4. **Local model offline** — with the provider set to a localhost model (e.g.
+   Ollama at `http://localhost:11434/v1`), run any workflow. **Expected:** it
+   completes normally (NFR-029).
+5. **Cloud provider offline** — set the provider to a cloud endpoint and run a
+   workflow. **Expected:** it fails fast with the S1 "provider unavailable —
+   you are offline" message; no hang, no partial write (FR-022).
+
+### 22. Release install & update (S5-05; EIR-001, DEP-001)
+
+1. `npm run pack`. Confirm `build/zotero-agent-<version>.xpi` and
+   `build/update.json` are produced; the `.xpi` version and `update.json`
+   `update_link` both match `package.json`.
+2. **Fresh install** — on a clean Zotero 9 profile, install the `.xpi` following
+   the README only. **Expected:** the plugin loads and the settings pane appears
+   (no manual steps beyond the README).
+3. **Update detection** — publish two versions (bump `package.json`, re-pack,
+   upload the `.xpi` to its `vX.Y.Z` tag and `update.json` to the `release`
+   tag). With the older version installed, Tools → Plugins → *Check for
+   Updates*. **Expected:** Zotero detects and installs the newer version.

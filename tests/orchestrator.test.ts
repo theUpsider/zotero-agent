@@ -10,7 +10,15 @@ import {
   type WorkflowEvent,
   type WorkflowOrchestrator,
 } from "../src/workflows/orchestrator";
-import type { ItemContext, ItemContextReader, ItemRef, NoteWriter, TagWriter } from "../src/zotero/types";
+import type {
+  HighlightWriter,
+  ItemContext,
+  ItemContextReader,
+  ItemRef,
+  NoteWriter,
+  PlannedHighlight,
+  TagWriter,
+} from "../src/zotero/types";
 import { annotation, itemContext, metadata } from "./fixtures/items";
 
 function fakePrefs(values: Record<string, unknown> = {}): PrefStore {
@@ -78,6 +86,25 @@ function fakeBackend(
   };
 }
 
+/** Records the highlights it is asked to draw; every planned passage succeeds
+ * as a real highlight unless a failure is configured. Page text is fixed so
+ * the pure resolver can locate quotes (the resolver itself is covered in
+ * highlights.test.ts). */
+function fakeHighlightWriter(
+  pageText = "The results show a 42% improvement over the baseline. A key limitation is the small sample.",
+): HighlightWriter & { createHighlights: ReturnType<typeof vi.fn> } {
+  return {
+    readTargets: vi.fn(async () => ({
+      pages: [{ pageIndex: 0, pageLabel: "1", text: pageText }],
+      existing: [],
+    })),
+    createHighlights: vi.fn(async (_ref: ItemRef, planned: PlannedHighlight[]) => ({
+      created: planned.map((p) => ({ ...p, kind: "highlight" as const })),
+      failed: [],
+    })),
+  };
+}
+
 function setup(overrides: {
   provider?: AIProvider;
   ensureProvider?: () => Promise<AIProvider>;
@@ -86,6 +113,7 @@ function setup(overrides: {
   prefs?: Record<string, unknown>;
   retrieval?: OrchestratorRetrievalDeps;
   tagWriter?: TagWriter;
+  highlightWriter?: HighlightWriter;
 } = {}) {
   const provider = overrides.provider ?? fakeProvider();
   const reader = overrides.reader ?? fakeReader(overrides.contexts ?? twoItems);
@@ -96,6 +124,7 @@ function setup(overrides: {
     reader,
     noteWriter,
     tagWriter,
+    ...(overrides.highlightWriter ? { highlightWriter: overrides.highlightWriter } : {}),
     prefs: fakePrefs(overrides.prefs),
     logger: noopLogger,
     ...(overrides.retrieval ? { retrieval: overrides.retrieval } : {}),
@@ -562,5 +591,67 @@ describe("write-safety on partial failure (S4-06)", () => {
     expect(eventTypes(events).at(-1)).toBe("failed");
     expect(orchestrator.lastResult()?.sections).toHaveLength(1);
     expect(orchestrator.lastResult()?.sections[0]?.ref.key).toBe("AAA");
+  });
+});
+
+describe("auto-highlight workflow (S5-02)", () => {
+  const reply = JSON.stringify([
+    { category: "results", quote: "42% improvement over the baseline" },
+    { category: "limitations", quote: "small sample" },
+  ]);
+
+  it("resolves passages, writes highlights, and summarizes per category", async () => {
+    const highlightWriter = fakeHighlightWriter();
+    const { orchestrator, events } = setup({
+      provider: fakeProvider(async () => ({ text: reply })),
+      contexts: [twoItems[0]!],
+      highlightWriter,
+    });
+    await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+
+    expect(eventTypes(events).at(-1)).toBe("completed");
+    expect(highlightWriter.createHighlights).toHaveBeenCalledTimes(1);
+    const planned = highlightWriter.createHighlights.mock.calls[0]![1] as PlannedHighlight[];
+    expect(planned.map((p) => p.category)).toEqual(["results", "limitations"]);
+    const section = orchestrator.lastResult()!.sections[0]!;
+    expect(section.markdown).toContain("Created 2 highlights");
+    expect(section.markdown).toContain("**results**");
+    expect(section.markdown).toContain("**limitations**");
+  });
+
+  it("runs to completion after a single start — no per-highlight prompt (FR-047)", async () => {
+    const highlightWriter = fakeHighlightWriter();
+    const { orchestrator } = setup({
+      provider: fakeProvider(async () => ({ text: reply })),
+      contexts: [twoItems[0]!],
+      highlightWriter,
+    });
+    await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+    // One model call, one write call, zero interactive prompts.
+    expect(highlightWriter.readTargets).toHaveBeenCalledTimes(1);
+    expect(highlightWriter.createHighlights).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails cleanly when no highlight writer is configured", async () => {
+    const { orchestrator, events } = setup({ contexts: [twoItems[0]!] });
+    await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+    const failed = events.at(-1) as Extract<WorkflowEvent, { type: "failed" }>;
+    expect(failed.type).toBe("failed");
+    expect(failed.message).toContain("Highlighting is unavailable");
+  });
+
+  it("reports items whose PDF text cannot be read", async () => {
+    const highlightWriter: HighlightWriter = {
+      readTargets: vi.fn(async () => ({ pages: [], existing: [] })),
+      createHighlights: vi.fn(async () => ({ created: [], failed: [] })),
+    };
+    const { orchestrator } = setup({
+      provider: fakeProvider(async () => ({ text: reply })),
+      contexts: [twoItems[0]!],
+      highlightWriter,
+    });
+    await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+    expect(highlightWriter.createHighlights).not.toHaveBeenCalled();
+    expect(orchestrator.lastResult()!.sections[0]!.markdown).toContain("no readable PDF text");
   });
 });
