@@ -11,7 +11,9 @@ OpenAI-compatible provider (OpenAI, Ollama, LM Studio, vLLM) with "Test connecti
 validation and secure credential storage; a local, offline retrieval index for
 large PDFs; the scholarly workflows (analyze papers, generate/summarize notes,
 suggest tags) and **auto-highlighting** — the model identifies passages per
-category and writes colored highlights into the PDF, with duplicate suppression.
+category in a dedicated model pass and writes colored highlights into the PDF,
+with duplicate suppression and automatic repair of earlier unanchored note
+fallbacks when reader geometry becomes available.
 Sprint plan: [`docs/sprints/`](docs/sprints/) · manual test scripts:
 [`docs/sprints/smoke-tests.md`](docs/sprints/smoke-tests.md) · MVP traceability:
 [`docs/sprints/mvp-acceptance.md`](docs/sprints/mvp-acceptance.md)
@@ -53,6 +55,11 @@ Option B — load from source (dev, hot rebuild via `npm start`):
 
 Smoke test: Tools menu → *AI Research Assistant: Analyze selected items* shows the count of selected items.
 Full manual test scripts: [`docs/sprints/smoke-tests.md`](docs/sprints/smoke-tests.md).
+
+For auto-highlighting, keep the target PDF open in Zotero's reader. The reader
+provides character rectangles needed to anchor real highlights. If geometry is
+temporarily unavailable, the plugin preserves a page-note fallback and retries
+it automatically during a later run with the PDF open.
 
 ## Releasing (S5-05)
 

@@ -67,12 +67,15 @@ dimension (5 best):
    without flooding the page with low-value highlights (precision over recall).
 4. **Non-duplication** — a re-run and existing user highlights produce no
    overlapping duplicates (FR-046); verified via smoke test 20.
+5. **Anchor integrity and repair** — real highlights have nonzero per-line
+   rectangles at the quoted text. Unanchored plugin notes persist until a
+   replacement succeeds, then disappear without duplication (FR-103..105).
 
-| # | Span precision | Category correctness | Coverage | Non-duplication | Reviewer / date |
-|---|----------------|----------------------|----------|-----------------|-----------------|
-| 1 | | | | | |
-| 2 | | | | | |
-| 3 | | | | | |
+| # | Span precision | Category correctness | Coverage | Non-duplication | Anchor/repair | Reviewer / date |
+|---|----------------|----------------------|----------|-----------------|---------------|-----------------|
+| 1 | | | | | | |
+| 2 | | | | | | |
+| 3 | | | | | | |
 
 ### Acceptance thresholds (release gate)
 
@@ -85,6 +88,8 @@ the fixture set:
   spans are acceptable for an assistive feature the user can edit.
 - **Non-duplication = 5** — non-negotiable: a re-run must never double-highlight
   (data-quality issue, not a taste issue).
+- **Anchor integrity and repair = 5** — zero-position notes must never be
+  reported as final highlights; replacement must be save-before-delete.
 
 A fixture falling below any threshold is recorded with a note; release proceeds
 only when the fixture-set averages meet the bar or the shortfall is consciously

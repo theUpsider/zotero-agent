@@ -206,14 +206,15 @@ no jargon, no API key fragments.
 
 ## Sprint 5 — auto-highlighting, offline, release
 
-### 19. Auto-highlight a paper (S5-01/S5-02; FR-004, FR-041..FR-048, EIR-005, OP-009)
+### 19. Auto-highlight a paper (S5-01/S5-02/S5-09; FR-004, FR-041..FR-048, FR-102..FR-105, EIR-005, OP-009)
 
-1. Select an item with a PDF and few/no existing highlights. Item menu (or
+1. Open the target PDF in Zotero's reader, then select its parent item with
+   few/no existing highlights. Item menu (or
    Tools) → *AI Research Assistant* → **Highlight paper**.
 2. **Expected:** the run completes after the single click — no per-highlight
    confirmation (FR-047). The result view summarizes created highlights grouped
    by category with page numbers (S5-02 AC#4).
-3. Open the PDF in Zotero's reader. **Expected:** colored highlights appear on
+3. In the already-open PDF reader, **expected:** colored highlights appear on
    the quoted passages; each color matches the category→color mapping in the
    settings pane (FR-044, EIR-005). Passages the model quoted but that could not
    be located in the PDF text are listed in the result view, not silently
@@ -221,9 +222,14 @@ no jargon, no API key fragments.
 4. Right-click a created highlight in the reader. **Expected:** it behaves like
    a normal Zotero annotation — you can change its color, add a comment, and
    delete it (FR-048).
-5. If the summary reports "added as page note annotation(s)", the build's PDF
-   worker did not expose glyph geometry — record the Zotero version and note
-   this is the S2-08 "Probe B" outcome (the committed fallback baseline).
+5. Include a sentence split across a visual line, preferably with end-line
+   hyphenation. **Expected:** normalized matching still produces per-line
+   highlight rectangles at the copied passage; Zotero's own search behavior is
+   not used for anchoring.
+6. If the summary reports "added as page note annotation(s)", close/reopen the
+   PDF reader and rerun. **Expected:** the existing zero-position plugin note is
+   detected, replaced by a real highlight, and removed only after replacement
+   succeeds. No second fallback note is created (FR-103..105).
 
 ### 20. Highlight duplicate prevention (S5-03; FR-046, NFR-020)
 
@@ -233,6 +239,9 @@ no jargon, no API key fragments.
 3. Manually add your own highlight over a sentence, then run **Highlight paper**
    once more. **Expected:** the AI does not create an overlapping highlight on
    the span you already highlighted (no AI duplicate over user work).
+4. With one plugin fallback note present, rerun with the PDF open. **Expected:**
+   its span is reserved during duplicate detection; exactly one real highlight
+   remains after repair.
 
 ### 21. Offline pass (S5-04; NFR-028..032, FR-022, ASM-007)
 

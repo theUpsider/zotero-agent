@@ -2,8 +2,8 @@
 
 **Projekt:** Zotero-Erweiterung mit KI-Integration für Paper-Analyse, Annotationen, Highlights, Tags und Notizen  
 **Dokumenttyp:** Requirements-Elicitation-Ergebnis und IEEE-inspirierte SRS-Arbeitsgrundlage  
-**Version:** 0.1  
-**Datum:** 2026-07-08  
+**Version:** 0.2  
+**Datum:** 2026-07-15  
 **Status:** Arbeitsfassung, aus Interview abgeleitet  
 **Sprache:** Deutsch, formale Anforderungen in englischer „The system shall …“-Form  
 
@@ -14,6 +14,7 @@
 | Version | Datum | Änderung |
 |---|---:|---|
 | 0.1 | 2026-07-08 | Initiale Arbeitsfassung auf Basis des Requirements-Interviews |
+| 0.2 | 2026-07-15 | Auto-Highlighting um getrennte Kategorie-Durchläufe, Positionsvalidierung und Reparatur fehlerhafter Fallback-Annotationen ergänzt |
 
 ---
 
@@ -270,6 +271,10 @@ Das System ist eine Erweiterung innerhalb von Zotero. Es nutzt Zotero-Dokumente,
 | FR-046 | Detailed | The system shall avoid creating duplicate highlights for the same text span when an equivalent highlight already exists. |
 | FR-047 | Detailed | The system shall not require per-highlight confirmation after the user starts the automatic highlighting workflow. |
 | FR-048 | Detailed | The system shall treat AI-generated highlights as regular Zotero highlights after creation. |
+| FR-102 | Detailed | The system shall process each configured highlight category in a separate AI pass before merging and deduplicating the suggested passages. |
+| FR-103 | Detailed | The system shall detect plugin-created highlight fallbacks with invalid or missing text geometry and retry them as positioned highlights when usable PDF reader geometry becomes available. |
+| FR-104 | Detailed | The system shall remove a broken fallback annotation only after its replacement highlight has been saved successfully. |
+| FR-105 | Detailed | The system shall preserve a fallback annotation when repair geometry is unavailable or replacement creation fails. |
 
 ### 7.5 Notizgenerierung und Notizzusammenfassung
 
@@ -596,13 +601,13 @@ Das System ist eine Erweiterung innerhalb von Zotero. Es nutzt Zotero-Dokumente,
 | Nicht-funktionale Anforderungen | initial definiert |
 | Test-/Akzeptanzkriterien | noch auszuarbeiten |
 | Architekturentscheidung für konkrete Libraries | offen |
-| Technische Machbarkeit Zotero-Annotation-Write | zu validieren |
+| Technische Machbarkeit Zotero-Annotation-Write | Quellcode-geprüft; visuelle Live-Abnahme ausstehend |
 
 ### 13.3 Offene Punkte
 
 | ID | Offener Punkt | Priorität |
 |---|---|---:|
-| OP-001 | Technische Machbarkeit der Erstellung farbiger Zotero-Highlights per Plugin-API prüfen | hoch |
+| OP-001 | **Erledigt 2026-07-15:** `saveFromJSON`-Write und Reader-Zeichengeometrie geprüft; Live-Smoke-Test bleibt Abnahmeschritt | hoch |
 | OP-002 | Konkrete lokale RAG-/Vector-Store-Library auswählen | hoch |
 | OP-003 | Machbarkeit GitHub Copilot Integration prüfen | hoch |
 | OP-004 | Machbarkeit Codex Integration prüfen | hoch |
@@ -690,7 +695,7 @@ Das System ist eine Erweiterung innerhalb von Zotero. Es nutzt Zotero-Dokumente,
 | Ziel | Abgedeckt durch Anforderungen |
 |---|---|
 | Bessere Auffindbarkeit von Annotationen | FR-003, FR-005, FR-006, FR-008, FR-091 |
-| Automatische Markierungen | FR-004, FR-041 bis FR-048 |
+| Automatische Markierungen | FR-004, FR-041 bis FR-048, FR-102 bis FR-105 |
 | Farbsemantik | FR-002, FR-023 bis FR-031 |
 | Notizen aus Markierungen | FR-005, FR-049 bis FR-056 |
 | Tags | FR-007, FR-057 bis FR-064 |

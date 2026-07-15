@@ -78,7 +78,7 @@ flowchart TB
 
 | §15.2 component | Module | Key contract | Built in |
 |---|---|---|---|
-| Zotero Adapter | `src/zotero/adapter.ts`, `src/zotero/types.ts` | plain serializable item context; only module touching `Zotero` global | S2-01, S2-06, S4-05, S5-02 |
+| Zotero Adapter | `src/zotero/adapter.ts`, `src/zotero/types.ts` | plain item context; annotation keys; open-reader char geometry; fallback detection/repair; only module touching `Zotero` global | S2-01, S2-06, S4-05, S5-02 |
 | AI Provider Manager | `src/providers/` (registry + impls) | `AIProvider` (`validateConfig`, `complete`) in `src/providers/types.ts` | S1-01, S1-03 |
 | Prompt Manager | `src/prompts/templates.ts`, composer | template render + `{{context}}` assembly under token budget | S2-03, S3-05 |
 | Color Semantics Manager | `src/core/colorSemantics.ts` | pure mapping + (de)serialization; already implemented | S1-07 (UI) |
@@ -118,5 +118,6 @@ Hard invariants behind this table:
 Everything except `src/zotero/` and `src/ui/` is Zotero-free by construction: composer,
 chunker, color semantics, config parsing, error mapping, orchestrator (with fake adapter +
 fake provider), and the fake in-memory `RetrievalBackend` all run under vitest without a
-Zotero instance. `src/zotero/` and `src/ui/` are covered by documented smoke tests
-(`docs/sprints/smoke-tests.md`).
+Zotero instance. Critical adapter contracts are exercised with a mocked Zotero
+boundary (`tests/zoteroAdapter.test.ts`); visual placement and `src/ui/` remain
+covered by documented live smoke tests (`docs/sprints/smoke-tests.md`).

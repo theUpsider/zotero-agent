@@ -84,20 +84,33 @@ sequenceDiagram
     participant A as Adapter (write)
     participant V as Result View
 
-    O->>P: identify passages per category (FR-041..043)
-    P-->>O: exact quotes + approx. location
+    loop each configured category (FR-102)
+        O->>P: identify all relevant passages for one category
+        P-->>O: exact quotes
+    end
     O->>Res: resolve quotes → PDF positions (fuzzy match)
     Res-->>O: positions | unresolved list
-    O->>A: read existing highlights
+    O->>A: read existing highlights + broken fallback notes
     O->>Dup: filter (span overlap ≥ threshold,<br/>user highlights count too, FR-046)
     Dup-->>O: passages to create
     loop per passage
-        O->>A: createHighlight(position, categoryColor)
+        O->>A: read open-reader character geometry
+        A->>A: normalize quote → chars; validate nonzero line rects
+        O->>A: createHighlight(position, categoryColor, uniqueKey)
         Note over A: regular Zotero annotation —<br/>user can edit/delete (FR-048)
+        opt replacing broken fallback (FR-103..105)
+            A->>A: remove old note only after highlight save succeeds
+        end
     end
     O->>V: created per category + pages,<br/>unresolved passages reported
     Note over O,V: failure mid-run: created highlights stay valid,<br/>rest reported (NFR-023)
 ```
+
+`PDFWorker.getFullText()` supplies page text but no character geometry. Geometry
+comes from an already-open Zotero PDF reader (`getPageData().chars`). When no
+reader geometry is available, the adapter retains one zero-position page-note
+fallback. A later run detects it, reserves its span against duplicates, retries
+anchoring, and deletes the note only after a valid replacement is saved.
 
 ## 4. Scenario: background index update (no user, no network)
 

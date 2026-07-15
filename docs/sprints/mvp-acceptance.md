@@ -5,16 +5,16 @@ the requirement to the code that implements it and to the smoke test that
 verifies it in a live Zotero profile (pure logic is additionally covered by the
 vitest suite, which runs in CI).
 
-**Legend:** ✅ implemented + unit-covered where testable; 🔎 requires the manual
-smoke test to confirm the Zotero-facing behavior (code that touches the `Zotero`
-global cannot be unit-tested — see CLAUDE.md).
+**Legend:** ✅ implemented + unit-covered where testable, including mocked
+Zotero adapter contracts; 🔎 requires a live smoke test for visual placement,
+reader behavior, persistence, and sync.
 
 | MVP | Requirement | Implementation | Verified by | State |
 |-----|-------------|----------------|-------------|-------|
 | MVP-001 | Configure AI providers | `providers/`, `ui/settingsApi.ts`, `core/config.ts` | smoke 2–5 | 🔎 |
 | MVP-002 | Configure color→category semantics | `core/colorSemantics.ts`, settings pane | smoke 6; `colorSemantics.test.ts` | ✅🔎 |
 | MVP-003 | Analyze selected papers | orchestrator `analyze-papers`, `prompts/scholarly.ts` | smoke 9; `orchestrator.test.ts` | ✅🔎 |
-| MVP-004 | Auto-create colored highlights | `workflows/highlights.ts`, `zotero/adapter.ts` `createHighlightWriter`, orchestrator `auto-highlight` | smoke 19–20; `highlights.test.ts`, `highlightSummary.test.ts` | ✅🔎 |
+| MVP-004 | Auto-create colored highlights | per-category orchestrator passes, `workflows/highlights.ts`, adapter geometry + fallback repair | smoke 19–20; `highlights.test.ts`, `zoteroAdapter.test.ts`, `highlightSummary.test.ts` | ✅🔎 |
 | MVP-005 | Generate notes from annotations | orchestrator `generate-notes` | smoke 11; `orchestrator.test.ts` | ✅🔎 |
 | MVP-006 | Summarize notes & annotations | orchestrator `summarize-notes` | smoke 12 | ✅🔎 |
 | MVP-007 | Analyze/suggest/create tags | orchestrator `suggest-tags`, `core/tags.ts`, adapter `createTagWriter` | smoke 13; `tags.test.ts` | ✅🔎 |
@@ -28,7 +28,7 @@ global cannot be unit-tested — see CLAUDE.md).
 
 ## Invariant checks (component view §3, CLAUDE.md)
 
-- **Zotero isolation** — only `src/zotero/`, `src/plugin.ts`, `src/core/config.ts`
+- **Zotero isolation** — only `src/zotero/` and `src/plugin.ts`
   glue reference the `Zotero` global; every pure module (incl. the new
   `workflows/highlights.ts`, `workflows/highlightSummary.ts`) runs under vitest.
 - **`retrieval/` ⊥ `providers/`** — no import either way; embeddings/index data
@@ -51,7 +51,7 @@ global cannot be unit-tested — see CLAUDE.md).
 | FR-014 Codex provider | not technically feasible | `docs/research/provider-feasibility.md` — Codex has no third-party completion API. |
 | FR-015 Copilot provider | not technically feasible | same doc — no official API; only a ToS-violating token exchange. |
 | Local embeddings default-on (`retrieval.embeddings`) | off by default | pending the day-1 wasm probe confirmation in a live profile (S3-03); retrieval degrades to keyword-only, still offline. |
-| Highlight glyph-rect extraction (`PDFWorker` structured text) | committed note-annotation fallback | S2-08 "Probe B" still pending live verification; when the API is absent, passages become page-note annotations so a run never fails on rect math. |
+| Highlight character geometry (open-reader internal API) | validated fallback + repair lifecycle | Source inspection confirmed `PDFWorker` has no structured-text API. Open-reader `getPageData().chars` supplies rects; unavailable geometry creates one preserved note fallback, retried on a later run. Visual smoke verification remains pending. |
 
 ## Result
 

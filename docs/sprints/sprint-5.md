@@ -10,7 +10,7 @@ duplicates on re-run. Then: disconnect network → local workflows (index query,
 viewing, local model) still work; external provider fails with a clear message. Install
 release `.xpi` from scratch.
 
-**Requirements covered:** FR-004, FR-041…FR-048, EIR-005, NFR-020 (highlights part),
+**Requirements covered:** FR-004, FR-041…FR-048, FR-102…FR-105, EIR-005, NFR-020 (highlights part),
 NFR-028…NFR-032, NFR-023, FR-022, ASM-007, OP-009. Stretch: FR-014/FR-015 per S1-08 outcome.
 
 **Precondition:** S2-08 spike confirmed highlight writes are feasible (otherwise this sprint
@@ -22,9 +22,9 @@ re-plans: highlight suggestions rendered as a note with page references instead)
 
 ### S5-01 · Passage identification for categories · **Must** · L
 **Refs:** FR-041, FR-042, FR-043, FR-045
-Workflow step: AI identifies text passages relevant to each configured category, returning
-exact quotes + approximate location; resolver maps quotes to PDF text positions (strategy
-from S2-08 findings). Most-relevant color chosen when several categories match (FR-045).
+Workflow step: one AI pass per configured category identifies all relevant passages and
+returns exact quotes; replies are merged and the resolver maps quotes to PDF text positions.
+Most-relevant color is retained when passages overlap (FR-045, FR-102).
 
 **Acceptance criteria**
 - [x] For a fixture paper, passages returned for methodology/results/etc. with exact text spans that exist in the PDF (fuzzy-match tolerance defined and tested). — `composeHighlightPrompt` (`prompts/scholarly.ts`) demands verbatim quotes; `planHighlights` locates them. Tolerance (case, ligatures, whitespace, hyphenation) documented in `workflows/highlights.ts` `normalize()` and tested in `highlights.test.ts`.
@@ -38,7 +38,7 @@ Adapter write path: create Zotero highlight annotations at resolved positions us
 mapped color. Runs to completion after user start — no per-highlight confirmation.
 
 **Acceptance criteria** (these implement OP-009)
-- [~] Created highlights are visible in the Zotero PDF reader at the correct text spans with the category-mapped color (FR-044, EIR-005). — write path via `Zotero.Annotations.saveFromJSON` in `adapter.ts` `createHighlightWriter`; **live verification pending** (smoke test 19; S2-08 "Probe B" for the glyph-rect API — committed note fallback when absent).
+- [~] Created highlights are visible in the Zotero PDF reader at the correct text spans with the category-mapped color (FR-044, EIR-005). — `createHighlightWriter` reads character rectangles from an open reader, validates nonzero per-line rects, supplies a unique Zotero object key, then calls `Zotero.Annotations.saveFromJSON`; **visual live verification pending** (smoke test 19).
 - [x] Whole workflow runs after a single user start; zero further prompts (FR-047). — orchestrator `runAutoHighlight` runs to completion; tested ("runs to completion after a single start").
 - [~] Created highlights are regular Zotero annotations: user can edit color, add comment, delete (FR-048). — created via the standard annotation item API; **live verification pending** (smoke test 19.4).
 - [x] Result view summarizes created highlights per category with page numbers. — `summarizeHighlightRun`; tested in `highlightSummary.test.ts`, wired via orchestrator.
@@ -53,6 +53,18 @@ the workflow must not double-highlight.
 - [x] Re-run on an already-highlighted paper creates no equivalent duplicates (FR-046) — smoke-tested. — existing highlights read by `readTargets` and passed to `planHighlights`; overlaps dropped. Smoke test 20; unit-tested ("does not duplicate over an existing highlight").
 - [x] Overlap detection (span intersection ≥ threshold on same page) unit-tested as a pure module. — `spanOverlapRatio` + `overlapsAny` in `workflows/highlights.ts`; `highlights.test.ts`.
 - [x] Manually created user highlights on the same span also count as existing (no AI duplicate over user work). — user and prior-run highlights are read identically (`readExistingHighlights`), both suppress overlaps. Smoke test 20.3.
+
+### S5-09 · Broken-highlight detection and repair · **Must** · M
+**Refs:** FR-103, FR-104, FR-105, NFR-023
+Detect zero-position page-note fallbacks created when reader geometry was unavailable. On a
+later run with the PDF open, retry quote-to-character anchoring and replace each fallback
+transactionally.
+
+**Acceptance criteria**
+- [x] Prior plugin fallback notes are detected from their category/text payload and invalid zero-area geometry. — `readRepairableFallbacks`; adapter regression test.
+- [x] Repair candidates reserve their text spans so the category passes cannot create overlapping duplicates. — orchestrator merges repair candidates into duplicate suppression.
+- [x] A valid replacement uses real reader character rectangles and the old note is erased only after `saveFromJSON` succeeds (FR-104). — `computeRects` + `createHighlights`; adapter regression test.
+- [x] Missing reader geometry or a failed replacement preserves the old note for a later retry (FR-105). — fallback branch never erases before successful replacement.
 
 ### S5-04 · Offline behavior verification & gaps · **Must** · M
 **Refs:** NFR-028…NFR-032, FR-022, MVP-014, ASM-007
@@ -115,7 +127,7 @@ colors for manual highlighting. FR-004 then needs a documented requirement devia
 - [~] Full demo script passes on a clean profile with a real library. — code paths complete; the live run is the pending manual step (smoke 19–22).
 - [x] MVP traceability pass complete (`mvp-acceptance.md`), all Must-items across sprints closed or consciously descoped with rationale.
 - [x] Release published: tagged, `.xpi` + `update.json`, README current. — build emits both artifacts; README "Releasing (S5-05)". Tagging/upload is the manual publish step.
-- [x] `npm test`, `npm run typecheck` green; smoke-test suite documented and executed. — 244 unit tests + typecheck green; smoke suite documented (execution is the manual live pass).
+- [x] `npm test`, `npm run typecheck` green; smoke-test suite documented and executed. — 251 unit tests + typecheck green; smoke suite documented (execution is the manual live pass).
 
 ---
 
@@ -123,15 +135,16 @@ colors for manual highlighting. FR-004 then needs a documented requirement devia
 
 Implemented in this sprint: pure passage resolver + duplicate prevention
 (`workflows/highlights.ts`, `highlights.test.ts`), highlight prompt
-(`composeHighlightPrompt`), the `HighlightWriter` seam + `createHighlightWriter`
+(`composeHighlightPrompt`), per-category provider passes, the `HighlightWriter` seam + `createHighlightWriter`
 adapter write path (`zotero/adapter.ts`), the `auto-highlight` orchestrator
 branch + result summary (`workflows/highlightSummary.ts`), the "Highlight paper"
 menu/UI wiring, `update.json` build generation, the offline + highlight + release
 smoke tests, the extended highlight eval rubric, and the MVP traceability doc.
-S5-08 closed as not feasible.
+fallback detection/repair, and S5-08 closed as not feasible.
 
 **Legend:** `[x]` done + covered by CI where testable · `[~]` code complete,
 final confirmation needs the manual Zotero-profile pass (smoke-tests.md) — code
-touching the `Zotero` global cannot be unit-tested. The single high-risk residual
-is the PDF glyph-rect API (S2-08 "Probe B"); the committed page-note fallback
-means a run never fails on rect math even if that API is absent in a given build.
+touching the live reader still needs visual smoke testing. Installed Zotero source
+inspection resolved S2-08 Probe B: `PDFWorker` has no structured-text API, so the
+adapter uses open-reader `getPageData().chars`. Page-note fallbacks are preserved
+and automatically repaired on a later run instead of being treated as final output.
