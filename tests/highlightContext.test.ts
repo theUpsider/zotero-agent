@@ -62,6 +62,35 @@ describe("auto-highlight context packing", () => {
     expect(windows.at(-1)?.end).toBe(document.length);
   });
 
+  it("cuts prose windows at word boundaries with full coverage and ≥500 overlap", () => {
+    const prosePages: PdfPageText[] = [0, 1, 2].map((pageIndex) => ({
+      pageIndex,
+      pageLabel: String(pageIndex + 1),
+      text: `Sentence ${"alpha bravo charlie delta echo ".repeat(80)}ends page ${pageIndex + 1}.`,
+    }));
+    const document = serializeHighlightPages(prosePages);
+    const windows = createHighlightTextWindows(prosePages, 2_500);
+    expect(windows.length).toBeGreaterThan(1);
+    expect(windows[0]?.start).toBe(0);
+    expect(windows.at(-1)?.end).toBe(document.length);
+    for (let index = 0; index < windows.length; index++) {
+      const window = windows[index]!;
+      expect(window.text).toBe(document.slice(window.start, window.end));
+      // No mid-word splices: each cut lands next to whitespace.
+      if (window.end < document.length) {
+        expect(/\s$/.test(window.text)).toBe(true);
+      }
+      if (window.start > 0) {
+        expect(/\s/.test(document[window.start - 1]!)).toBe(true);
+      }
+      if (index > 0) {
+        expect(windows[index - 1]!.end - window.start).toBeGreaterThanOrEqual(
+          HIGHLIGHT_WINDOW_OVERLAP_CHARS,
+        );
+      }
+    }
+  });
+
   it("uses PDF retrieval only to rank and retains every window once", () => {
     const windows = createHighlightTextWindows(pages, 2_500);
     const ranked = rankHighlightWindows(windows, [

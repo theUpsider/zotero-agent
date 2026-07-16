@@ -199,16 +199,14 @@ export function createNoteWriter(logger: Logger): NoteWriter {
  * double-highlighted, FR-046). Write side: draw each resolved passage as an
  * ordinary Zotero highlight annotation at the mapped color via the documented
  * `Zotero.Annotations.saveFromJSON` path (S2-08). Rects come from the PDF's
- * glyph geometry; when they cannot be computed for a passage the writer falls
- * back to a page-level note annotation carrying the text — the committed
- * baseline from the S2-08 re-scope guard, so a run never fails on rect math.
- * Every write is per-passage try/caught: a failure mid-run leaves the already-
- * created annotations valid and reports the rest (NFR-023). */
+ * glyph geometry. The writer opens a temporary background reader when needed,
+ * and reports a placement failure rather than creating a misleading zero-area
+ * note. Every write is per-passage try/caught: a failure mid-run leaves the
+ * already-created annotations valid and reports the rest (NFR-023). */
 
-/** Loose view of the PDF worker's structured-text extraction. Which method a
- * given Zotero 9 build exposes is the S2-08 "Probe B" live-verification item;
- * this is cast defensively so a missing method degrades to the note fallback
- * instead of throwing into the workflow. */
+/** Loose view of the open reader's structured-text extraction. This internal
+ * API is cast defensively so signature drift becomes an explicit per-passage
+ * placement failure instead of producing an invalid annotation. */
 interface ReaderChar {
   c: string;
   inlineRect?: [number, number, number, number];
@@ -217,6 +215,61 @@ interface ReaderChar {
   spaceAfter?: boolean;
   lineBreakAfter?: boolean;
   paragraphBreakAfter?: boolean;
+}
+
+interface ReaderPageData {
+  chars?: ReaderChar[];
+  viewBox?: [number, number, number, number];
+}
+
+interface GeometryReader {
+  itemID: number;
+  _initPromise?: Promise<unknown>;
+  _waitForReader?: () => Promise<void>;
+  close?: () => void;
+  _internalReader?: {
+    _primaryView?: {
+      _pdfPages?: Record<number, ReaderPageData>;
+      _iframeWindow?: {
+        PDFViewerApplication?: {
+          pdfDocument?: {
+            getPageData?: (arg: { pageIndex: number }) => Promise<ReaderPageData>;
+          };
+        };
+      };
+    };
+  };
+}
+
+interface ReaderManager {
+  _readers?: GeometryReader[];
+  open?: (
+    itemID: number,
+    location?: unknown,
+    options?: { openInBackground?: boolean },
+  ) => Promise<GeometryReader | undefined>;
+}
+
+/** Acquire character geometry without requiring the user to have opened the
+ * PDF first. A temporary background reader is closed by the caller after all
+ * highlights have been positioned; an existing reader is always left alone. */
+async function acquireGeometryReader(
+  attachmentID: number,
+): Promise<{ reader: GeometryReader | null; temporary: boolean }> {
+  const manager = Zotero.Reader as unknown as ReaderManager;
+  const existing = manager._readers?.find((candidate) => candidate.itemID === attachmentID);
+  if (existing) {
+    await existing._initPromise;
+    await existing._waitForReader?.();
+    return { reader: existing, temporary: false };
+  }
+  if (typeof manager.open !== "function") return { reader: null, temporary: false };
+  const opened = await manager.open(attachmentID, undefined, { openInBackground: true });
+  const reader = opened ?? manager._readers?.find((candidate) => candidate.itemID === attachmentID);
+  if (!reader) return { reader: null, temporary: false };
+  await reader._initPromise;
+  await reader._waitForReader?.();
+  return { reader, temporary: true };
 }
 
 /** Split full text into per-page text on the form-feed page delimiter Zotero's
@@ -303,48 +356,30 @@ function readRepairableFallbacks(attachment: Zotero.Item): PlannedHighlight[] {
 
 /** Union the glyph rects of `text` on `pageIndex` into per-line highlight rects
  * (S2-08 strategy step 3). Returns null when the glyphs can't be obtained or
- * the text can't be located — the caller then uses the note fallback. */
+ * the text can't be located; the caller reports a placement failure. */
 async function computeRects(
-  attachmentID: number,
+  reader: GeometryReader,
   pageIndex: number,
   text: string,
   logger: Logger,
-): Promise<[number, number, number, number][] | null> {
-  let chars: ReaderChar[] | undefined;
+): Promise<{ rects: [number, number, number, number][]; offset: number; top: number } | null> {
+  let pageData: ReaderPageData | undefined;
   try {
-    const readerManager = Zotero.Reader as unknown as {
-      _readers?: Array<{
-        itemID: number;
-        _initPromise?: Promise<unknown>;
-        _internalReader?: {
-          _primaryView?: {
-            _pdfPages?: Record<number, { chars?: ReaderChar[] }>;
-            _iframeWindow?: {
-              PDFViewerApplication?: {
-                pdfDocument?: { getPageData?: (arg: { pageIndex: number }) => Promise<{ chars?: ReaderChar[] }> };
-              };
-            };
-          };
-        };
-      }>;
-    };
-    const reader = readerManager._readers?.find((candidate) => candidate.itemID === attachmentID);
-    if (!reader) return null;
-    await reader._initPromise;
     const view = reader._internalReader?._primaryView;
-    chars = view?._pdfPages?.[pageIndex]?.chars;
-    if (!chars) {
+    pageData = view?._pdfPages?.[pageIndex];
+    if (!pageData?.chars) {
       const getPageData = view?._iframeWindow?.PDFViewerApplication?.pdfDocument?.getPageData;
       if (typeof getPageData !== "function") return null;
-      chars = (await getPageData.call(
+      pageData = await getPageData.call(
         view?._iframeWindow?.PDFViewerApplication?.pdfDocument,
         { pageIndex },
-      )).chars;
+      );
     }
   } catch (error) {
-    logger.error("PDF reader character extraction failed; retaining note fallback", error);
+    logger.error("PDF reader character extraction failed", error);
     return null;
   }
+  const chars = pageData?.chars;
   if (!chars?.length) return null;
   const source = readerText(chars);
   const needle = normalizedReaderText(text, [...text].map((_, index) => index));
@@ -353,7 +388,13 @@ async function computeRects(
   const start = source.charMap[at];
   const end = source.charMap[at + needle.text.length - 1];
   if (start === undefined || end === undefined) return null;
-  return unionLineRects(chars.slice(start, end + 1));
+  const rects = unionLineRects(chars.slice(start, end + 1));
+  if (rects.length === 0) return null;
+  const viewBox = pageData?.viewBox;
+  const top = viewBox
+    ? Math.max(0, viewBox[3] - viewBox[1] - Math.max(...rects.map((rect) => rect[3])))
+    : Math.max(0, rects[0]![3]);
+  return { rects, offset: start, top };
 }
 
 function readerText(chars: ReaderChar[]): { text: string; charMap: number[] } {
@@ -423,10 +464,11 @@ function unionLineRects(chars: ReaderChar[]): [number, number, number, number][]
 }
 
 /** Zero-padded "ppppp|oooooo|ttttt" sort index the reader uses for ordering. */
-function sortIndex(pageIndex: number, top: number): string {
+function sortIndex(pageIndex: number, offset: number, top: number): string {
   const p = String(pageIndex).padStart(5, "0");
+  const o = String(Math.max(0, Math.round(offset))).padStart(6, "0");
   const t = String(Math.max(0, Math.round(top))).padStart(5, "0");
-  return `${p}|000000|${t}`;
+  return `${p}|${o}|${t}`;
 }
 
 export function createHighlightWriter(logger: Logger): HighlightWriter {
@@ -471,8 +513,23 @@ export function createHighlightWriter(logger: Logger): HighlightWriter {
         saveFromJSON(att: Zotero.Item, json: Record<string, unknown>): Promise<Zotero.Item>;
       };
 
-      for (const highlight of planned) {
-        try {
+      let geometry: { reader: GeometryReader | null; temporary: boolean };
+      try {
+        geometry = await acquireGeometryReader(attachmentID);
+      } catch (error) {
+        logger.error(`opening PDF reader failed for item ${ref.key}`, error);
+        return {
+          created,
+          failed: planned.map((highlight) => ({
+            text: highlight.text,
+            reason: `PDF coordinates unavailable: ${toWriteError(error)}`,
+          })),
+        };
+      }
+
+      try {
+        for (const highlight of planned) {
+          try {
           const fallback = attachment.getAnnotations().find((annotation) => {
             if (String(annotation.annotationType ?? "") !== "note") return false;
             if ((annotation.annotationComment ?? "") !== `[${highlight.category}] ${highlight.text}`) return false;
@@ -483,18 +540,19 @@ export function createHighlightWriter(logger: Logger): HighlightWriter {
               return false;
             }
           });
-          const rects = await computeRects(attachmentID, highlight.pageIndex, highlight.text, logger);
-          const key = Zotero.Utilities.generateObjectKey();
-          if (rects && rects.length > 0) {
-            const top = rects[0]![3];
+          const match = geometry.reader
+            ? await computeRects(geometry.reader, highlight.pageIndex, highlight.text, logger)
+            : null;
+          if (match) {
+            const key = Zotero.Utilities.generateObjectKey();
             await annotations.saveFromJSON(attachment, {
               key,
               type: "highlight",
               color: highlight.color,
               text: highlight.text,
               pageLabel: highlight.pageLabel,
-              sortIndex: sortIndex(highlight.pageIndex, top),
-              position: { pageIndex: highlight.pageIndex, rects },
+              sortIndex: sortIndex(highlight.pageIndex, match.offset, match.top),
+              position: { pageIndex: highlight.pageIndex, rects: match.rects },
             });
             created.push({ ...highlight, kind: "highlight" });
             if (fallback) {
@@ -505,29 +563,23 @@ export function createHighlightWriter(logger: Logger): HighlightWriter {
               }
             }
           } else {
-            if (fallback) {
-              created.push({ ...highlight, kind: "note" });
-              continue;
-            }
-            // Committed fallback: a page-level note annotation carrying the
-            // passage, so the passage is still surfaced in the reader (S2-08).
-            await annotations.saveFromJSON(attachment, {
-              key,
-              type: "note",
-              color: highlight.color,
-              comment: `[${highlight.category}] ${highlight.text}`,
-              pageLabel: highlight.pageLabel,
-              sortIndex: sortIndex(highlight.pageIndex, 0),
-              position: { pageIndex: highlight.pageIndex, rects: [[0, 0, 0, 0]] },
+            failed.push({
+              text: highlight.text,
+              reason: "PDF coordinates unavailable for the matched passage",
             });
-            created.push({ ...highlight, kind: "note" });
           }
-        } catch (error) {
-          logger.error(`creating highlight failed for item ${ref.key}`, error);
-          failed.push({ text: highlight.text, reason: toWriteError(error) });
+          } catch (error) {
+            logger.error(`creating highlight failed for item ${ref.key}`, error);
+            failed.push({ text: highlight.text, reason: toWriteError(error) });
+          }
         }
+      } finally {
+        if (geometry.temporary) geometry.reader?.close?.();
       }
-      logger.log(`created ${created.length} highlight annotation(s) on item ${ref.key}`);
+      logger.log(
+        `created ${created.length} positioned highlight annotation(s) on item ${ref.key}; ` +
+          `${failed.length} could not be placed`,
+      );
       return { created, failed };
     },
   };

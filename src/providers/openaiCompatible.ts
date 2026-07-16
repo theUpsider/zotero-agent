@@ -65,7 +65,7 @@ export function buildChatCompletionRequest(
 
 export function parseChatCompletionResponse(body: unknown): CompletionResult {
   const data = body as {
-    choices?: { message?: { content?: unknown } }[];
+    choices?: { message?: { content?: unknown }; finish_reason?: unknown }[];
     model?: unknown;
     usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
   };
@@ -74,6 +74,7 @@ export function parseChatCompletionResponse(body: unknown): CompletionResult {
     throw new ProviderResponseError("The AI service returned an unexpected response.");
   }
   const result: CompletionResult = { text: content };
+  if (data.choices?.[0]?.finish_reason === "length") result.truncated = true;
   if (typeof data.model === "string") result.model = data.model;
   const usage = data.usage;
   if (usage) {

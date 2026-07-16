@@ -21,6 +21,10 @@ pref("extensions.zotero-agent.provider.requestTimeoutMs", 300000);
 // context window takes precedence.
 pref("extensions.zotero-agent.autoHighlight.contextWindowTokens", 65536);
 
+// Per-request text window for auto-highlight passes (tokens). Small windows
+// keep verbatim quotes accurate; large PDFs are covered by more windows.
+pref("extensions.zotero-agent.autoHighlight.windowTokens", 6000);
+
 // JSON-serialized color-to-category mapping; empty means built-in defaults.
 pref("extensions.zotero-agent.colorSemantics", "");
 

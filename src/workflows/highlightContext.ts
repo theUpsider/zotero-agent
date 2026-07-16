@@ -11,7 +11,10 @@ import type { PdfPageText } from "../zotero/types";
 
 export const DEFAULT_HIGHLIGHT_CONTEXT_TOKENS = 65_536;
 export const HIGHLIGHT_WINDOW_OVERLAP_CHARS = 500;
-export const HIGHLIGHT_COMPLETION_TOKENS = 4_096;
+/** Reasoning-capable local models can consume 4K hidden tokens before emitting
+ * any JSON. Reserve 8K at normal context sizes; small-context models receive a
+ * proportional cap in calculateHighlightRequestBudget(). */
+export const HIGHLIGHT_COMPLETION_TOKENS = 8_192;
 export const HIGHLIGHT_REASONING_RESERVE_TOKENS = 2_048;
 export const HIGHLIGHT_SAFETY_RATIO = 0.1;
 const CHAT_ENVELOPE_TOKENS = 8;
@@ -60,10 +63,14 @@ export function calculateHighlightRequestBudget(
   const promptOverheadTokens =
     approxTokens(composeHighlightPrompt("", [category])) + CHAT_ENVELOPE_TOKENS;
   const safetyTokens = Math.ceil(contextWindowTokens * HIGHLIGHT_SAFETY_RATIO);
+  const completionTokens = Math.min(
+    HIGHLIGHT_COMPLETION_TOKENS,
+    Math.max(4_096, Math.floor(contextWindowTokens * 0.125)),
+  );
   const payloadTokens =
     Math.floor(contextWindowTokens) -
     promptOverheadTokens -
-    HIGHLIGHT_COMPLETION_TOKENS -
+    completionTokens -
     HIGHLIGHT_REASONING_RESERVE_TOKENS -
     safetyTokens;
   if (payloadTokens < 256) {
@@ -74,7 +81,7 @@ export function calculateHighlightRequestBudget(
   return {
     contextWindowTokens: Math.floor(contextWindowTokens),
     promptOverheadTokens,
-    completionTokens: HIGHLIGHT_COMPLETION_TOKENS,
+    completionTokens,
     reasoningReserveTokens: HIGHLIGHT_REASONING_RESERVE_TOKENS,
     safetyTokens,
     payloadTokens,
@@ -88,9 +95,45 @@ export function serializeHighlightPages(pages: PdfPageText[]): string {
     .join("\n\n");
 }
 
-/** The whole serialized PDF is one window when possible. Otherwise fixed-size
- * maximal windows advance by budget-overlap, preserving 500 source characters
- * across every cut — including cuts at or around PDF page boundaries. */
+/** Fraction of the window size a cut may retreat to land on a text boundary. */
+const HIGHLIGHT_WINDOW_CUT_SLACK = 0.15;
+
+/** End a window at a paragraph, line, or word boundary near the ideal cut so
+ * the model never sees a mid-word splice. Falls back to the ideal cut when no
+ * whitespace exists in the slack zone. */
+function boundaryCut(document: string, idealEnd: number, floor: number): number {
+  if (idealEnd >= document.length) return document.length;
+  const zone = document.slice(floor, idealEnd);
+  const paragraph = zone.lastIndexOf("\n\n");
+  if (paragraph !== -1) return floor + paragraph + 2;
+  const line = zone.lastIndexOf("\n");
+  if (line !== -1) return floor + line + 1;
+  const word = zone.search(/\s\S*$/);
+  if (word !== -1) return floor + word + 1;
+  return idealEnd;
+}
+
+/** How far a window start may snap back to reach a word boundary. */
+const HIGHLIGHT_WINDOW_START_SNAP_CHARS = 64;
+
+/** Snap a window start backward to the previous word boundary so overlap never
+ * begins mid-word; snapping backward only ever grows the overlap. Bounded so a
+ * long unbroken run cannot balloon the overlap; a mid-word start is harmless
+ * then because the previous window still shows that text whole. */
+function boundaryStart(document: string, idealStart: number): number {
+  if (idealStart <= 0) return 0;
+  const limit = Math.max(0, idealStart - HIGHLIGHT_WINDOW_START_SNAP_CHARS);
+  for (let at = idealStart; at > limit; at--) {
+    if (/\s/.test(document[at - 1] as string)) return at;
+  }
+  return idealStart;
+}
+
+/** The whole serialized PDF is one window when possible. Otherwise maximal
+ * windows advance by budget-overlap, preserving at least 500 source characters
+ * across every cut — including cuts at or around PDF page boundaries. Cuts
+ * prefer paragraph, then line, then word boundaries within a small slack zone
+ * so quotes are never spliced mid-word at a window edge. */
 export function createHighlightTextWindows(
   pages: PdfPageText[],
   maxPayloadChars: number,
@@ -102,16 +145,30 @@ export function createHighlightTextWindows(
     return [{ text: document, start: 0, end: document.length, documentOrder: 0 }];
   }
   const windows: HighlightTextWindow[] = [];
-  const step = size - HIGHLIGHT_WINDOW_OVERLAP_CHARS;
-  for (let start = 0; start < document.length; start += step) {
-    const end = Math.min(document.length, start + size);
+  let start = 0;
+  for (;;) {
+    const idealEnd = Math.min(document.length, start + size);
+    // The cut may only retreat into the slack zone, and never so far that the
+    // next start (end - overlap) stops advancing.
+    const floor = Math.min(
+      idealEnd,
+      Math.max(
+        start + HIGHLIGHT_WINDOW_OVERLAP_CHARS + 1,
+        idealEnd - Math.floor(size * HIGHLIGHT_WINDOW_CUT_SLACK),
+      ),
+    );
+    const end = Math.max(floor, boundaryCut(document, idealEnd, floor));
     windows.push({
       text: document.slice(start, end),
       start,
       end,
       documentOrder: windows.length,
     });
-    if (end === document.length) break;
+    if (end >= document.length) break;
+    start = Math.max(
+      start + 1,
+      boundaryStart(document, end - HIGHLIGHT_WINDOW_OVERLAP_CHARS),
+    );
   }
   return windows;
 }

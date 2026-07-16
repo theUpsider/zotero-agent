@@ -17,7 +17,7 @@ import {
 import { getBoolPref, getIntPref, getStringPref, PREF_DEFAULTS, PREF_KEYS, type PrefStore } from "../core/config";
 import { AgentError, ContextLimitError, toUserMessage, type ErrorCode, type Logger } from "../core/errors";
 import { markdownToHtml } from "../core/markdown";
-import { approxTokens } from "../core/tokens";
+import { approxTokens, tokenBudgetToChars } from "../core/tokens";
 import {
   composeFreePrompt,
   composeItemContexts,
@@ -34,7 +34,7 @@ import {
   parseTagSuggestions,
 } from "../prompts/scholarly";
 import { getTemplate, PROMPT_TEMPLATES, type PromptTemplate } from "../prompts/templates";
-import type { AIProvider } from "../providers/types";
+import type { AIProvider, CompletionResult } from "../providers/types";
 import type { RetrievalBackend, RetrievalResult } from "../retrieval/types";
 import type {
   HighlightWriter,
@@ -301,19 +301,24 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
     }
   };
 
+  const completeWithMeta = async (
+    provider: AIProvider,
+    prompt: string,
+    signal: AbortSignal,
+    maxTokens?: number,
+  ): Promise<CompletionResult> =>
+    provider.complete({
+      messages: [{ role: "user", content: prompt }],
+      signal,
+      ...(maxTokens !== undefined ? { maxTokens } : {}),
+    });
+
   const complete = async (
     provider: AIProvider,
     prompt: string,
     signal: AbortSignal,
     maxTokens?: number,
-  ): Promise<string> => {
-    const result = await provider.complete({
-      messages: [{ role: "user", content: prompt }],
-      signal,
-      ...(maxTokens !== undefined ? { maxTokens } : {}),
-    });
-    return result.text;
-  };
+  ): Promise<string> => (await completeWithMeta(provider, prompt, signal, maxTokens)).text;
 
   /** Runs a per-item plan, pushing into `sections` as each item finishes so a
    * mid-run failure leaves completed sections inspectable (NFR-023) and any
@@ -395,9 +400,14 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
     highlightWriter: HighlightWriter,
     userContextWindowTokens: number,
     providerContextWindowTokens: number | undefined,
+    windowTokens: number,
     retrieval: OrchestratorRetrievalDeps | undefined,
     retrievalPassagesPerItem: number,
   ): Promise<WorkflowResultSection[]> => {
+    // Verbatim-quote fidelity degrades on very large inputs, so each request
+    // window is capped well below the context ceiling; the ceiling remains an
+    // upper safety bound via the per-category budget below.
+    const windowChars = tokenBudgetToChars(Math.max(256, Math.floor(windowTokens)));
     for (const [index, item] of composed.items.entries()) {
       signal.throwIfAborted();
       const targets = await highlightWriter.readTargets(item.ref);
@@ -429,7 +439,10 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
           const budget = calculateHighlightRequestBudget(effectiveContext, category);
           windowsByCategory.set(
             category,
-            createHighlightTextWindows(targets.pages, budget.payloadChars),
+            createHighlightTextWindows(
+              targets.pages,
+              Math.min(budget.payloadChars, windowChars),
+            ),
           );
         }
         const totalPasses = Math.max(
@@ -444,18 +457,13 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
           completionTokens: number,
         ): Promise<void> => {
           signal.throwIfAborted();
+          let result: CompletionResult;
           try {
-            const reply = await complete(
+            result = await completeWithMeta(
               provider,
               composeHighlightPrompt(text, [category]),
               signal,
               completionTokens,
-            );
-            suggestions.push(
-              ...parseHighlightSuggestions(reply).map((suggestion) => ({
-                category,
-                quote: suggestion.quote,
-              })),
             );
           } catch (error) {
             const contextLimited =
@@ -465,6 +473,27 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
             const split = splitHighlightWindow(text);
             if (!split) throw error;
             for (const half of split) await scanWindow(half, category, completionTokens);
+            return;
+          }
+          const parsed = parseHighlightSuggestions(result.text);
+          suggestions.push(
+            ...parsed.map((suggestion) => ({ category, quote: suggestion.quote })),
+          );
+          if (parsed.length === 0 && result.text.trim() !== "" && !result.truncated) {
+            deps.logger.error(
+              `auto-highlight reply for category "${category}" parsed to 0 suggestions ` +
+                `(${result.text.length} chars)`,
+            );
+          }
+          // A reply cut off at the completion-token limit means the window
+          // held more passages than fit; rescan its halves so the tail of the
+          // window is not silently skipped. Duplicate quotes from the
+          // already-parsed head are dropped by the existing dedupe.
+          if (result.truncated) {
+            const split = splitHighlightWindow(text);
+            if (split) {
+              for (const half of split) await scanWindow(half, category, completionTokens);
+            }
           }
         };
 
@@ -597,6 +626,11 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         PREF_KEYS.autoHighlightContextWindowTokens,
         PREF_DEFAULTS[PREF_KEYS.autoHighlightContextWindowTokens] as number,
       );
+      const autoHighlightWindowTokens = getIntPref(
+        deps.prefs,
+        PREF_KEYS.autoHighlightWindowTokens,
+        PREF_DEFAULTS[PREF_KEYS.autoHighlightWindowTokens] as number,
+      );
       let providerContextWindowTokens: number | undefined;
       if (request.kind === "auto-highlight" && provider.getModelCapabilities) {
         try {
@@ -656,6 +690,7 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
           deps.highlightWriter as HighlightWriter,
           autoHighlightContextWindowTokens,
           providerContextWindowTokens,
+          autoHighlightWindowTokens,
           deps.retrieval && getBoolPref(deps.prefs, PREF_KEYS.retrievalEnabled, true)
             ? deps.retrieval
             : undefined,

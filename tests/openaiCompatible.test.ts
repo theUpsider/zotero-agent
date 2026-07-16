@@ -122,6 +122,17 @@ describe("response parsing", () => {
     expect(() => parseChatCompletionResponse(null)).toThrow(ProviderResponseError);
   });
 
+  it("marks a reply cut off at the completion-token limit as truncated", () => {
+    const cut = parseChatCompletionResponse({
+      choices: [{ message: { content: "partial" }, finish_reason: "length" }],
+    });
+    expect(cut.truncated).toBe(true);
+    const finished = parseChatCompletionResponse({
+      choices: [{ message: { content: "done" }, finish_reason: "stop" }],
+    });
+    expect(finished.truncated).toBeUndefined();
+  });
+
   it("parses the models fixture", () => {
     expect(parseModelsResponse(modelsFixture)).toEqual(["llama3", "mistral", "gpt-4o-mini"]);
   });

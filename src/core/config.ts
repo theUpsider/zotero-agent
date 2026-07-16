@@ -23,6 +23,10 @@ export const PREF_KEYS = {
   /** User ceiling for auto-highlight model context. Provider-reported limits,
    * when lower, take precedence. */
   autoHighlightContextWindowTokens: `${PREFS_PREFIX}.autoHighlight.contextWindowTokens`,
+  /** Per-request text window for auto-highlight passes. Kept well below the
+   * context ceiling because verbatim-quote fidelity degrades on very large
+   * inputs; the context ceiling stays an upper safety bound. */
+  autoHighlightWindowTokens: `${PREFS_PREFIX}.autoHighlight.windowTokens`,
   /** Per-item character budget for PDF full text in composed prompts; fallback
    * cap used when an item isn't indexed yet (S2-03; retained by S3-05). */
   contextCharBudget: `${PREFS_PREFIX}.context.charBudgetPerItem`,
@@ -52,6 +56,7 @@ export const PREF_DEFAULTS: Record<string, string | number | boolean> = {
   [PREF_KEYS.colorSemantics]: "",
   [PREF_KEYS.requestTimeoutMs]: 300_000,
   [PREF_KEYS.autoHighlightContextWindowTokens]: 65_536,
+  [PREF_KEYS.autoHighlightWindowTokens]: 6_000,
   [PREF_KEYS.contextCharBudget]: 20000,
   [PREF_KEYS.contextTokenBudget]: 4000,
   [PREF_KEYS.retrievalEnabled]: true,

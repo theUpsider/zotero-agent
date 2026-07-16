@@ -54,6 +54,29 @@ Hope that helps.`;
     expect(parseHighlightSuggestions("no passages found")).toEqual([]);
     expect(parseHighlightSuggestions("")).toEqual([]);
   });
+
+  it("salvages the complete leading entries of a reply cut off mid-array", () => {
+    const reply =
+      '[{ "category": "results", "quote": "42% improvement" }, ' +
+      '{ "category": "limitations", "quote": "small sample size" }, ' +
+      '{ "category": "results", "quote": "the cut-off qu';
+    expect(parseHighlightSuggestions(reply)).toEqual([
+      { category: "results", quote: "42% improvement" },
+      { category: "limitations", quote: "small sample size" },
+    ]);
+  });
+
+  it("strips serialized page markers a quote copied across a page boundary", () => {
+    const reply = JSON.stringify([
+      { category: "results", quote: "end of one page. [PDF page 2] Start of the next" },
+    ]);
+    expect(parseHighlightSuggestions(reply)).toEqual([
+      { category: "results", quote: "end of one page. Start of the next" },
+    ]);
+    expect(parseHighlightSuggestions("- [results] before [PDF page 3] after")).toEqual([
+      { category: "results", quote: "before after" },
+    ]);
+  });
 });
 
 describe("spanOverlapRatio", () => {
@@ -247,6 +270,32 @@ describe("planHighlights", () => {
     );
     expect(planned).toEqual([]);
     expect(unresolved[0]?.reason).toBe("duplicate");
+  });
+
+  it("still deduplicates an existing highlight whose text cannot be located (FR-046)", () => {
+    // Wrong page index (e.g. a malformed stored position fell back to 0), so
+    // span resolution fails; the direct text comparison must still block a
+    // re-run from double-highlighting.
+    const existing: ExistingHighlight[] = [
+      { pageIndex: 0, text: "A key limitation is the small sample size of only twelve participants" },
+    ];
+    const { planned, unresolved } = planHighlights(
+      [
+        { category: "limitations", quote: "small sample size of only twelve participants" },
+        { category: "results", quote: "42% improvement over the baseline" },
+      ],
+      PAGES,
+      semantics,
+      existing,
+    );
+    expect(unresolved).toEqual([
+      {
+        category: "limitations",
+        quote: "small sample size of only twelve participants",
+        reason: "duplicate",
+      },
+    ]);
+    expect(planned.map((p) => p.category)).toEqual(["results"]);
   });
 
   it("allows a non-overlapping highlight on a page that already has one", () => {

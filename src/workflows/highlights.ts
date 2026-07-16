@@ -39,11 +39,22 @@ export interface PlanOptions {
   overlapThreshold?: number;
 }
 
+/** `[PDF page N]` markers exist only in the serialized request windows, never
+ * in the page text quotes are resolved against — a model quoting across a
+ * serialized page boundary copies one in, so it is stripped before matching. */
+const PAGE_MARKER_RE = /\s*\[PDF page [^\]\n]{1,20}\]\s*/g;
+
+function cleanQuote(quote: string): string {
+  return quote.replace(PAGE_MARKER_RE, " ").trim();
+}
+
 /** Parse the model's passage reply (S5-01). Primary format is a JSON array of
  * `{ "category", "quote" }`; tolerates a ```json fence, leading prose, and
- * trailing commentary by extracting the outermost bracketed array. Falls back
- * to line form `- [category] verbatim quote` when JSON is absent. Entries
- * missing a category or quote are skipped; the caller reports totals. */
+ * trailing commentary by extracting the outermost bracketed array. A reply cut
+ * off mid-array (completion token limit) still yields its complete leading
+ * entries. Falls back to line form `- [category] verbatim quote` when JSON is
+ * absent. Entries missing a category or quote are skipped; the caller reports
+ * totals. */
 export function parseHighlightSuggestions(text: string): HighlightSuggestion[] {
   const fromJson = parseJsonSuggestions(text);
   if (fromJson.length > 0) return fromJson;
@@ -52,24 +63,32 @@ export function parseHighlightSuggestions(text: string): HighlightSuggestion[] {
 
 function parseJsonSuggestions(text: string): HighlightSuggestion[] {
   const start = text.indexOf("[");
+  if (start === -1) return [];
   const end = text.lastIndexOf("]");
-  if (start === -1 || end <= start) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return [];
+  const candidates: string[] = [];
+  if (end > start) candidates.push(text.slice(start, end + 1));
+  // Truncated-reply salvage: close the array after the last complete entry.
+  const lastComplete = text.lastIndexOf("}");
+  if (lastComplete > start) candidates.push(`${text.slice(start, lastComplete + 1)}]`);
+  for (const candidate of candidates) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(parsed)) continue;
+    const suggestions: HighlightSuggestion[] = [];
+    for (const entry of parsed) {
+      if (entry === null || typeof entry !== "object") continue;
+      const record = entry as Record<string, unknown>;
+      const category = typeof record.category === "string" ? record.category.trim() : "";
+      const quote = typeof record.quote === "string" ? cleanQuote(record.quote) : "";
+      if (category && quote) suggestions.push({ category, quote });
+    }
+    if (suggestions.length > 0) return suggestions;
   }
-  if (!Array.isArray(parsed)) return [];
-  const suggestions: HighlightSuggestion[] = [];
-  for (const entry of parsed) {
-    if (entry === null || typeof entry !== "object") continue;
-    const record = entry as Record<string, unknown>;
-    const category = typeof record.category === "string" ? record.category.trim() : "";
-    const quote = typeof record.quote === "string" ? record.quote.trim() : "";
-    if (category && quote) suggestions.push({ category, quote });
-  }
-  return suggestions;
+  return [];
 }
 
 const LINE_RE = /^\s*(?:[-*+•]|\d+[.)])?\s*\[([^\]]+)\]\s*(.+?)\s*$/;
@@ -80,7 +99,7 @@ function parseLineSuggestions(text: string): HighlightSuggestion[] {
     const match = LINE_RE.exec(line);
     if (!match) continue;
     const category = (match[1] ?? "").trim();
-    const quote = (match[2] ?? "").replace(/^["'`]+|["'`]+$/g, "").trim();
+    const quote = cleanQuote((match[2] ?? "").replace(/^["'`]+|["'`]+$/g, ""));
     if (category && quote) suggestions.push({ category, quote });
   }
   return suggestions;
@@ -311,12 +330,33 @@ export function planHighlights(
   }));
 
   // Resolve existing highlights to spans up front so overlap tests are cheap.
+  // Text the resolver cannot place (reader-extracted text can differ from the
+  // PDFWorker page text) still guards against re-runs via direct text
+  // comparison below, so iterations never double-highlight (FR-046).
   const taken: Span[] = [];
+  const unlocatedExisting: string[] = [];
   for (const highlight of existing) {
     const onPage = normalizedPages.filter((p) => p.pageIndex === highlight.pageIndex);
     const found = locate(onPage, highlight.text);
-    if (found) taken.push({ pageIndex: found.pageIndex, start: found.normStart, end: found.normEnd });
+    if (found) {
+      taken.push({ pageIndex: found.pageIndex, start: found.normStart, end: found.normEnd });
+    } else {
+      const normalizedText = normalize(highlight.text).text;
+      if (normalizedText.length > 0) unlocatedExisting.push(normalizedText);
+    }
   }
+
+  const matchesUnlocatedExisting = (quote: string): boolean => {
+    const normalizedQuote = normalize(quote).text;
+    if (normalizedQuote.length === 0) return false;
+    return unlocatedExisting.some((existingText) => {
+      const [shorter, longer] =
+        normalizedQuote.length <= existingText.length
+          ? [normalizedQuote, existingText]
+          : [existingText, normalizedQuote];
+      return shorter.length / longer.length >= threshold && longer.includes(shorter);
+    });
+  };
 
   const planned: PlannedHighlight[] = [];
   const unresolved: UnresolvedHighlight[] = [];
@@ -325,6 +365,10 @@ export function planHighlights(
     const color = colorForCategory(colorSemantics, suggestion.category);
     if (!color) {
       unresolved.push({ ...suggestion, reason: "no-color" });
+      continue;
+    }
+    if (matchesUnlocatedExisting(suggestion.quote)) {
+      unresolved.push({ ...suggestion, reason: "duplicate" });
       continue;
     }
     const found = locate(normalizedPages, suggestion.quote);

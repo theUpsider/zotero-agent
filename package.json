@@ -14,6 +14,7 @@
     "start": "node scripts/build.mjs --watch",
     "pack": "node scripts/build.mjs --pack",
     "test": "npm run check:isolation && vitest run",
+    "test:e2e:local": "ZOTERO_AGENT_E2E=1 vitest run tests/e2e/localModelAutoHighlight.e2e.test.ts",
     "check:isolation": "node scripts/check-isolation.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

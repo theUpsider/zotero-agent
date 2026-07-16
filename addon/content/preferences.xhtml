@@ -52,6 +52,13 @@
     <html:p class="za-hint">Auto-highlighting sends the whole PDF when it fits this limit.
       If the provider reports a smaller context window, the smaller limit is used. Larger PDFs
       are scanned completely in overlapping windows.</html:p>
+    <html:div class="za-row">
+      <html:label for="za-highlight-window">Text per request (tokens)</html:label>
+      <html:input id="za-highlight-window" type="number" min="1024" step="512"
+        preference="extensions.zotero-agent.autoHighlight.windowTokens"/>
+    </html:div>
+    <html:p class="za-hint">How much PDF text each highlighting request sees. Smaller values
+      keep quotes accurate; larger values need fewer requests.</html:p>
   </groupbox>
 
   <groupbox id="za-colors-groupbox">

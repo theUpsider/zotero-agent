@@ -88,10 +88,11 @@ sequenceDiagram
     O->>A: read complete PDF page text
     O->>P: read optional configured-model context capability
     O->>O: effective limit = min(provider, user cap)<br/>minus exact prompt + output/reasoning + safety reserves
-    alt complete PDF fits
+    O->>O: window size = min(effective limit,<br/>quote-accuracy window pref)
+    alt complete PDF fits one window
         O->>O: one page-labelled window
     else oversized PDF
-        O->>O: maximal exhaustive windows,<br/>500-character overlap across every boundary
+        O->>O: exhaustive windows cut at paragraph/word<br/>boundaries, ≥500-character overlap across every cut
     end
     loop each configured category (FR-102)
         opt oversized and indexed
@@ -102,8 +103,8 @@ sequenceDiagram
         loop every window once (FR-106/110)
         O->>P: identify relevant passages; reserved output limit
         P-->>O: exact quotes
-        opt explicit context-limit rejection
-            O->>O: split only failed window with overlap
+        opt explicit context-limit rejection<br/>or reply cut at the output limit
+            O->>O: split only affected window with overlap<br/>(a cut reply keeps its parsed head)
             O->>P: retry both halves
         end
         end

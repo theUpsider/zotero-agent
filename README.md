@@ -13,7 +13,8 @@ large PDFs; the scholarly workflows (analyze papers, generate/summarize notes,
 suggest tags) and **auto-highlighting** — the model identifies passages per
 category in a dedicated model pass and writes colored highlights into the PDF,
 with duplicate suppression and automatic repair of earlier unanchored note
-fallbacks when reader geometry becomes available.
+fallbacks when reader geometry becomes available. New runs acquire reader
+geometry automatically and create only positioned highlights.
 Sprint plan: [`docs/sprints/`](docs/sprints/) · manual test scripts:
 [`docs/sprints/smoke-tests.md`](docs/sprints/smoke-tests.md) · MVP traceability:
 [`docs/sprints/mvp-acceptance.md`](docs/sprints/mvp-acceptance.md)
@@ -23,12 +24,14 @@ Sprint plan: [`docs/sprints/`](docs/sprints/) · manual test scripts:
 - Node.js LTS
 - Zotero 9 (separate test profile recommended)
 - `zip` (for `.xpi` packaging)
+- `pdftotext` from Poppler (only for the opt-in local-model PDF E2E test)
 
 ## Commands
 
 ```bash
 npm install        # once
 npm test           # unit tests (vitest)
+npm run test:e2e:local # two real PDFs via localhost:1234 Nemotron (opt-in)
 npm run typecheck  # tsc --noEmit
 npm run build      # bundle plugin into build/addon/
 npm start          # build + watch (rebuild on change)
@@ -56,10 +59,11 @@ Option B — load from source (dev, hot rebuild via `npm start`):
 Smoke test: Tools menu → *AI Research Assistant: Analyze selected items* shows the count of selected items.
 Full manual test scripts: [`docs/sprints/smoke-tests.md`](docs/sprints/smoke-tests.md).
 
-For auto-highlighting, keep the target PDF open in Zotero's reader. The reader
-provides character rectangles needed to anchor real highlights. If geometry is
-temporarily unavailable, the plugin preserves a page-note fallback and retries
-it automatically during a later run with the PDF open.
+For auto-highlighting, the plugin reuses an open PDF reader or opens a temporary
+background reader to obtain the character rectangles needed to anchor real
+highlights. If geometry is unavailable, the affected passage is reported as a
+placement failure; the plugin never presents a zero-position note as a created
+highlight. Earlier page-note fallbacks remain repairable.
 
 Auto-highlighting sends the complete, page-labelled PDF in one request per
 category whenever it fits the effective context window. The effective window
@@ -105,6 +109,7 @@ preferences (decision OP-006); the single source of key names and defaults is
 | `provider.openaiCompatible.model` | `""` | Model id, e.g. `llama3` |
 | `provider.requestTimeoutMs` | `300000` | HTTP timeout for provider calls (5 minutes) |
 | `autoHighlight.contextWindowTokens` | `65536` | User cap for auto-highlight context; a lower provider-reported limit wins |
+| `autoHighlight.windowTokens` | `6000` | PDF text per auto-highlight request; small windows keep verbatim quotes accurate, larger PDFs use more windows |
 | `colorSemantics` | `""` | JSON color→category mapping (empty = defaults) |
 
 ### Credential storage

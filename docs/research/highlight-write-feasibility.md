@@ -48,9 +48,9 @@ Creating the annotation is trivial *once we have `rects`*. Getting rects for
 
 - **`Zotero.PDFWorker` does not expose structured text.** Live Zotero source
   inspection confirmed that its public manager only exposes `getFullText`.
-  Character geometry is read from an already-open reader's internal PDF
-  document via `getPageData({ pageIndex }).chars`. If no reader is open, the
-  page-note fallback is retained and automatically retried on a later run.
+  Character geometry is read from a reader's internal PDF document via
+  `getPageData({ pageIndex }).chars`. The writer reuses an open reader or opens
+  a temporary background reader itself, then closes only that temporary reader.
 - Strategy for Sprint 5:
   1. Extract complete page text via `PDFWorker`; pack it into bounded,
      overlapping provider chunks independent of the retrieval index.
@@ -59,11 +59,10 @@ Creating the annotation is trivial *once we have `rects`*. Getting rects for
      (the model must be prompted to quote verbatim).
   4. Union the reader character rects of the matched span into line rects → `position.rects`.
   5. Compute `sortIndex` from pageIndex + match offset + top coordinate.
-- Fallback when reader geometry is unavailable: preserve one **zero-position
-  page-note annotation** containing `[category] text`. On a later run, detect
-  it as repairable, reserve its span against duplicates, retry anchoring, save
-  the replacement highlight, then erase the note. Never erase before a valid
-  replacement exists (FR-103..105, NFR-023).
+- If reader geometry remains unavailable, report the passage as failed and do
+  not create a zero-position note that looks like a successful annotation.
+  Legacy fallback notes are still detected and repaired: save the positioned
+  replacement first, then erase the old note (FR-103..105, NFR-023).
 - A quote that still cannot be matched after whitespace, delimiter,
   ligature, dash, and end-line-hyphen normalization remains explicitly
   unresolved; no approximate wrong-location highlight is written.
@@ -111,17 +110,18 @@ return `created annotation ${annotation.key} on ${att.key}`;
 - [x] Probe B: installed Zotero source confirms `PDFWorker` exposes
       `getFullText` but no structured-text/geometry method. Reader PDF document
       exposes `getPageData({ pageIndex }).chars`; adapter isolates this API.
-- [ ] Create a fallback with the reader unavailable, reopen the PDF, rerun,
-      and verify automatic replacement/removal.
+- [x] Adapter test opens a background reader when none exists and rejects
+      geometry-less writes instead of creating a zero-position note.
 
 ## Verdict for Sprint 5 (provisional)
 
-**Go, with repairable fallback.** Annotation creation is standard API and low
-risk. Positioning depends on internal open-reader character geometry, isolated
-behind `HighlightWriter`. Missing geometry produces a recoverable note, not a
-final substitute for a highlight. Adapter tests cover unique keys, valid rect
-creation, fallback detection, replacement ordering, and old-note deletion;
-live visual/sync verification remains required.
+**Go, with explicit placement failure and legacy repair.** Annotation creation
+is standard API and low risk. Positioning depends on internal reader character
+geometry, isolated behind `HighlightWriter`; the adapter acquires that reader
+itself. Missing geometry is reported and never masquerades as a successful
+highlight. Adapter tests cover background-reader acquisition, valid rect
+creation, legacy fallback detection, replacement ordering, and old-note
+deletion; live visual/sync verification remains required.
 
 ### Probe run log
 

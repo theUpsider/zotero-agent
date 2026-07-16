@@ -6,7 +6,7 @@ import {
   noopLogger,
   ProviderResponseError,
 } from "../src/core/errors";
-import type { AIProvider, CompletionRequest } from "../src/providers/types";
+import type { AIProvider, CompletionRequest, CompletionResult } from "../src/providers/types";
 import type { RetrievalBackend, RetrievalQuery, RetrievalResult } from "../src/retrieval/types";
 import {
   createWorkflowOrchestrator,
@@ -15,6 +15,7 @@ import {
   type WorkflowEvent,
   type WorkflowOrchestrator,
 } from "../src/workflows/orchestrator";
+import { HIGHLIGHT_COMPLETION_TOKENS } from "../src/workflows/highlightContext";
 import type {
   HighlightWriter,
   ItemContext,
@@ -36,7 +37,7 @@ function fakePrefs(values: Record<string, unknown> = {}): PrefStore {
 }
 
 function fakeProvider(
-  complete: (request: CompletionRequest) => Promise<{ text: string }> = async () => ({
+  complete: (request: CompletionRequest) => Promise<CompletionResult> = async () => ({
     text: "generated **answer**",
   }),
 ): AIProvider {
@@ -606,6 +607,9 @@ describe("auto-highlight workflow (S5-02)", () => {
   ]);
   const oneCategoryPrefs = (contextWindowTokens?: number): Record<string, unknown> => ({
     [PREF_KEYS.colorSemantics]: JSON.stringify({ "#5fb236": ["results"] }),
+    // Pin the per-request window above the context ceiling so these tests
+    // exercise the context-window math, not the quote-accuracy window cap.
+    [PREF_KEYS.autoHighlightWindowTokens]: 65_536,
     ...(contextWindowTokens !== undefined
       ? { [PREF_KEYS.autoHighlightContextWindowTokens]: contextWindowTokens }
       : {}),
@@ -717,6 +721,9 @@ describe("auto-highlight workflow (S5-02)", () => {
       contexts: [bigItem],
       highlightWriter,
       retrieval: { backend },
+      // Window pref above the document size: single window, so retrieval has
+      // no ranking role either.
+      prefs: { [PREF_KEYS.autoHighlightWindowTokens]: 65_536 },
     });
     await orchestrator.run({ kind: "auto-highlight", items: [{ libraryID: 1, key: "AAA" }] });
 
@@ -742,7 +749,7 @@ describe("auto-highlight workflow (S5-02)", () => {
     expect(provider.complete).toHaveBeenCalledTimes(7);
     const request = vi.mocked(provider.complete).mock.calls[0]![0];
     expect(request.messages[0]?.content).toContain(pageText);
-    expect(request.maxTokens).toBe(4_096);
+    expect(request.maxTokens).toBe(HIGHLIGHT_COMPLETION_TOKENS);
   });
 
   it("uses lower provider metadata, while missing metadata keeps the 64K default", async () => {
@@ -857,6 +864,38 @@ describe("auto-highlight workflow (S5-02)", () => {
     // remaining categories each keep their one full-PDF call.
     expect(provider.complete).toHaveBeenCalledTimes(9);
     expect(eventTypes(events).at(-1)).toBe("completed");
+  });
+
+  it("keeps a truncated reply's parsed head and rescans the window halves", async () => {
+    let truncatedOnce = false;
+    const provider = fakeProvider(async (request) => {
+      // oneCategoryPrefs maps a color only for "results"; cut off that pass.
+      if (!truncatedOnce && request.messages[0]!.content.includes("- results\n")) {
+        truncatedOnce = true;
+        return {
+          text: '[{ "category": "results", "quote": "42% improvement over the baseline" }',
+          truncated: true,
+        };
+      }
+      return { text: "[]" };
+    });
+    const highlightWriter = fakeHighlightWriter(
+      `${"filler prose ".repeat(60)}The results show a 42% improvement over the baseline.`,
+    );
+    const { orchestrator, events } = setup({
+      provider,
+      contexts: [twoItems[0]!],
+      prefs: oneCategoryPrefs(),
+      highlightWriter,
+    });
+    await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+    // The truncated first window adds two half-window rescans; the six other
+    // categories keep their single full-PDF call.
+    expect(provider.complete).toHaveBeenCalledTimes(9);
+    expect(eventTypes(events).at(-1)).toBe("completed");
+    // The head that was returned before the cut is not lost.
+    const planned = highlightWriter.createHighlights.mock.calls[0]![1] as PlannedHighlight[];
+    expect(planned.map((p) => p.text)).toContain("42% improvement over the baseline");
   });
 
   it("does not split non-context provider failures", async () => {

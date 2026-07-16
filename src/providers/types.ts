@@ -33,6 +33,9 @@ export interface CompletionResult {
   text: string;
   model?: string;
   usage?: { promptTokens?: number; completionTokens?: number };
+  /** True when the reply was cut off at the completion-token limit
+   * (finish_reason "length"); callers can shrink the request and retry. */
+  truncated?: boolean;
 }
 
 /** Optional model metadata exposed by provider discovery endpoints. Providers

@@ -99,10 +99,10 @@ export interface HighlightTargets {
   repairable?: PlannedHighlight[];
 }
 
-/** A highlight the writer actually created, echoed back for the result
- * summary (S5-02 AC#4). `kind` is "highlight" for a real colored highlight, or
- * "note" for the committed fallback (a page-level note annotation) when a
- * passage's glyph rects could not be computed (S2-08 re-scope guard). */
+/** An annotation the writer actually created, echoed back for the result
+ * summary (S5-02 AC#4). New writes are real positioned `highlight`s. `note`
+ * remains in the union only while legacy zero-position fallbacks can be read
+ * and repaired. */
 export interface CreatedHighlight {
   pageIndex: number;
   pageLabel: string;
