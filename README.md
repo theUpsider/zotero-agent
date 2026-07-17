@@ -2,7 +2,9 @@
 
 Zotero 9 extension for AI-assisted analysis of papers, annotations, highlights, tags and notes.
 Requirements: [`docs/zotero_ai_research_assistant_requirements.md`](docs/zotero_ai_research_assistant_requirements.md) ·
-Build guide: [`docs/research/zotero-9-extension-build-guide.md`](docs/research/zotero-9-extension-build-guide.md)
+Build guide: [`docs/research/zotero-9-extension-build-guide.md`](docs/research/zotero-9-extension-build-guide.md) ·
+Architecture: [`docs/architecture/06-holistic-architecture.md`](docs/architecture/06-holistic-architecture.md) ·
+Sprint plan: [`docs/sprints/`](docs/sprints/)
 
 ## Status
 
@@ -143,7 +145,7 @@ src/
                   the only modules touching Zotero/Mozilla globals
 tests/            vitest unit tests for the pure modules (fixtures, no live HTTP)
 scripts/build.mjs esbuild bundle + static copy + .xpi packaging
-docs/             requirements and research documents
+docs/             requirements, architecture (5 views + holistic reference), sprint plan, and research documents
 ```
 
 Design rules baked into the layout (from requirements §15): business logic stays free of the
