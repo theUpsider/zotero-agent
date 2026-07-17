@@ -29,7 +29,9 @@ export interface SelectedItem extends ItemRef {
 
 /** Regular items currently selected in the pane (FR-035, FR-036).
  * Attachments/notes/annotations in the selection are skipped. */
-export function getSelectedItemRefs(window: _ZoteroTypes.MainWindow): SelectedItem[] {
+export function getSelectedItemRefs(
+  window: _ZoteroTypes.MainWindow,
+): SelectedItem[] {
   const items = window.ZoteroPane.getSelectedItems();
   return items
     .filter((item) => item.isRegularItem())
@@ -48,17 +50,23 @@ export async function listAllItemRefs(logger: Logger): Promise<ItemRef[]> {
     try {
       const items = await Zotero.Items.getAll(library.libraryID, true);
       for (const item of items) {
-        if (item.isRegularItem()) refs.push({ libraryID: item.libraryID, key: item.key });
+        if (item.isRegularItem())
+          refs.push({ libraryID: item.libraryID, key: item.key });
       }
     } catch (error) {
-      logger.error(`listing items in library ${library.libraryID} failed`, error);
+      logger.error(
+        `listing items in library ${library.libraryID} failed`,
+        error,
+      );
     }
   }
   return refs;
 }
 
 /** Read annotations of an item's PDF attachments (research guide §6.4). */
-export async function getItemAnnotations(item: Zotero.Item): Promise<AnnotationInfo[]> {
+export async function getItemAnnotations(
+  item: Zotero.Item,
+): Promise<AnnotationInfo[]> {
   const annotations: AnnotationInfo[] = [];
   const attachmentIDs = item.isAttachment() ? [item.id] : item.getAttachments();
   for (const id of attachmentIDs) {
@@ -130,7 +138,8 @@ async function readPdfText(
 
   try {
     const result = await Zotero.PDFWorker.getFullText(attachmentID, null);
-    if (result?.text) return { text: String(result.text), source: "pdf-worker" };
+    if (result?.text)
+      return { text: String(result.text), source: "pdf-worker" };
   } catch (error) {
     logger.error("PDFWorker full-text extraction failed", error);
   }
@@ -154,9 +163,14 @@ export function createItemContextReader(logger: Logger): ItemContextReader {
     async readItemContexts(refs: ItemRef[]): Promise<ItemContext[]> {
       const contexts: ItemContext[] = [];
       for (const ref of refs) {
-        const item = await Zotero.Items.getByLibraryAndKeyAsync(ref.libraryID, ref.key);
+        const item = await Zotero.Items.getByLibraryAndKeyAsync(
+          ref.libraryID,
+          ref.key,
+        );
         if (!item) {
-          logger.log(`item ${ref.libraryID}/${ref.key} no longer exists; skipping`);
+          logger.log(
+            `item ${ref.libraryID}/${ref.key} no longer exists; skipping`,
+          );
           continue;
         }
         const pdf = await readPdfText(item, logger);
@@ -180,7 +194,10 @@ export function createItemContextReader(logger: Logger): ItemContextReader {
  * Never touches collections or item locations (EIR-006). */
 export function createNoteWriter(logger: Logger): NoteWriter {
   return {
-    async createChildNote(ref: ItemRef, html: string): Promise<{ noteKey: string }> {
+    async createChildNote(
+      ref: ItemRef,
+      html: string,
+    ): Promise<{ noteKey: string }> {
       const note = new Zotero.Item("note");
       note.libraryID = ref.libraryID;
       note.setNote(html);
@@ -233,7 +250,9 @@ interface GeometryReader {
       _iframeWindow?: {
         PDFViewerApplication?: {
           pdfDocument?: {
-            getPageData?: (arg: { pageIndex: number }) => Promise<ReaderPageData>;
+            getPageData?: (arg: {
+              pageIndex: number;
+            }) => Promise<ReaderPageData>;
           };
         };
       };
@@ -257,15 +276,22 @@ async function acquireGeometryReader(
   attachmentID: number,
 ): Promise<{ reader: GeometryReader | null; temporary: boolean }> {
   const manager = Zotero.Reader as unknown as ReaderManager;
-  const existing = manager._readers?.find((candidate) => candidate.itemID === attachmentID);
+  const existing = manager._readers?.find(
+    (candidate) => candidate.itemID === attachmentID,
+  );
   if (existing) {
     await existing._initPromise;
     await existing._waitForReader?.();
     return { reader: existing, temporary: false };
   }
-  if (typeof manager.open !== "function") return { reader: null, temporary: false };
-  const opened = await manager.open(attachmentID, undefined, { openInBackground: true });
-  const reader = opened ?? manager._readers?.find((candidate) => candidate.itemID === attachmentID);
+  if (typeof manager.open !== "function")
+    return { reader: null, temporary: false };
+  const opened = await manager.open(attachmentID, undefined, {
+    openInBackground: true,
+  });
+  const reader =
+    opened ??
+    manager._readers?.find((candidate) => candidate.itemID === attachmentID);
   if (!reader) return { reader: null, temporary: false };
   await reader._initPromise;
   await reader._waitForReader?.();
@@ -285,7 +311,34 @@ function splitPages(fullText: string): PdfPageText[] {
 
 function firstPdfAttachmentID(item: Zotero.Item): number | undefined {
   if (item.isPDFAttachment()) return item.id;
-  return item.getAttachments().find((id) => Zotero.Items.get(id)?.isPDFAttachment());
+  return item
+    .getAttachments()
+    .find((id) => Zotero.Items.get(id)?.isPDFAttachment());
+}
+
+/** Open the first PDF attachment of an item in the foreground reader (FR-004
+ * convenience: when the user triggers "Highlight paper", the PDF opens so they
+ * can watch highlights appear). Returns true when the reader was opened. */
+export async function openPdfAttachment(
+  ref: ItemRef,
+  logger: Logger,
+): Promise<boolean> {
+  try {
+    const item = await Zotero.Items.getByLibraryAndKeyAsync(
+      ref.libraryID,
+      ref.key,
+    );
+    if (!item) return false;
+    const attachmentID = firstPdfAttachmentID(item);
+    if (attachmentID === undefined) return false;
+    const manager = Zotero.Reader as unknown as ReaderManager;
+    if (typeof manager.open !== "function") return false;
+    await manager.open(attachmentID, undefined, { openInBackground: false });
+    return true;
+  } catch (error) {
+    logger.error(`opening PDF reader failed for item ${ref.key}`, error);
+    return false;
+  }
 }
 
 /** Read existing highlight annotations as {pageIndex, text}. pageIndex is read
@@ -303,7 +356,8 @@ function readExistingHighlights(attachment: Zotero.Item): ExistingHighlight[] {
         pageIndex?: number;
         rects?: number[][];
       };
-      if (typeof position.pageIndex === "number") pageIndex = position.pageIndex;
+      if (typeof position.pageIndex === "number")
+        pageIndex = position.pageIndex;
       if (!validRects(position.rects)) continue;
     } catch {
       // Malformed position: fall back to page 0; overlap test still helps.
@@ -313,7 +367,9 @@ function readExistingHighlights(attachment: Zotero.Item): ExistingHighlight[] {
   return existing;
 }
 
-function validRects(rects: unknown): rects is [number, number, number, number][] {
+function validRects(
+  rects: unknown,
+): rects is [number, number, number, number][] {
   return (
     Array.isArray(rects) &&
     rects.length > 0 &&
@@ -321,7 +377,9 @@ function validRects(rects: unknown): rects is [number, number, number, number][]
       (rect) =>
         Array.isArray(rect) &&
         rect.length === 4 &&
-        rect.every((value) => typeof value === "number" && Number.isFinite(value)) &&
+        rect.every(
+          (value) => typeof value === "number" && Number.isFinite(value),
+        ) &&
         rect[2]! > rect[0]! &&
         rect[3]! > rect[1]!,
     )
@@ -332,17 +390,21 @@ function readRepairableFallbacks(attachment: Zotero.Item): PlannedHighlight[] {
   const repairable: PlannedHighlight[] = [];
   for (const annotation of attachment.getAnnotations()) {
     if (String(annotation.annotationType ?? "") !== "note") continue;
-    const match = /^\[([^\]]+)]\s+([\s\S]+)$/.exec(annotation.annotationComment ?? "");
+    const match = /^\[([^\]]+)]\s+([\s\S]+)$/.exec(
+      annotation.annotationComment ?? "",
+    );
     if (!match) continue;
     try {
       const position = JSON.parse(annotation.annotationPosition ?? "{}") as {
         pageIndex?: number;
         rects?: number[][];
       };
-      if (typeof position.pageIndex !== "number" || validRects(position.rects)) continue;
+      if (typeof position.pageIndex !== "number" || validRects(position.rects))
+        continue;
       repairable.push({
         pageIndex: position.pageIndex,
-        pageLabel: annotation.annotationPageLabel ?? String(position.pageIndex + 1),
+        pageLabel:
+          annotation.annotationPageLabel ?? String(position.pageIndex + 1),
         category: match[1] as string,
         color: annotation.annotationColor ?? "#ffd400",
         text: match[2] as string,
@@ -362,13 +424,18 @@ async function computeRects(
   pageIndex: number,
   text: string,
   logger: Logger,
-): Promise<{ rects: [number, number, number, number][]; offset: number; top: number } | null> {
+): Promise<{
+  rects: [number, number, number, number][];
+  offset: number;
+  top: number;
+} | null> {
   let pageData: ReaderPageData | undefined;
   try {
     const view = reader._internalReader?._primaryView;
     pageData = view?._pdfPages?.[pageIndex];
     if (!pageData?.chars) {
-      const getPageData = view?._iframeWindow?.PDFViewerApplication?.pdfDocument?.getPageData;
+      const getPageData =
+        view?._iframeWindow?.PDFViewerApplication?.pdfDocument?.getPageData;
       if (typeof getPageData !== "function") return null;
       pageData = await getPageData.call(
         view?._iframeWindow?.PDFViewerApplication?.pdfDocument,
@@ -382,7 +449,10 @@ async function computeRects(
   const chars = pageData?.chars;
   if (!chars?.length) return null;
   const source = readerText(chars);
-  const needle = normalizedReaderText(text, [...text].map((_, index) => index));
+  const needle = normalizedReaderText(
+    text,
+    [...text].map((_, index) => index),
+  );
   const at = source.text.indexOf(needle.text);
   if (at === -1) return null;
   const start = source.charMap[at];
@@ -392,7 +462,10 @@ async function computeRects(
   if (rects.length === 0) return null;
   const viewBox = pageData?.viewBox;
   const top = viewBox
-    ? Math.max(0, viewBox[3] - viewBox[1] - Math.max(...rects.map((rect) => rect[3])))
+    ? Math.max(
+        0,
+        viewBox[3] - viewBox[1] - Math.max(...rects.map((rect) => rect[3])),
+      )
     : Math.max(0, rects[0]![3]);
   return { rects, offset: start, top };
 }
@@ -415,7 +488,10 @@ function readerText(chars: ReaderChar[]): { text: string; charMap: number[] } {
   return normalizedReaderText(raw.join(""), sourceMap);
 }
 
-function normalizedReaderText(original: string, sourceMap: number[]): { text: string; charMap: number[] } {
+function normalizedReaderText(
+  original: string,
+  sourceMap: number[],
+): { text: string; charMap: number[] } {
   const out: string[] = [];
   const charMap: number[] = [];
   let previousSpace = false;
@@ -434,7 +510,17 @@ function normalizedReaderText(original: string, sourceMap: number[]): { text: st
       continue;
     }
     previousSpace = false;
-    const canonical = ({ "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-" } as Record<string, string>)[char] ?? char.toLowerCase();
+    const canonical =
+      (
+        {
+          "‐": "-",
+          "‑": "-",
+          "‒": "-",
+          "–": "-",
+          "—": "-",
+          "−": "-",
+        } as Record<string, string>
+      )[char] ?? char.toLowerCase();
     for (const expanded of canonical) {
       out.push(expanded);
       charMap.push(sourceMap[index] as number);
@@ -444,14 +530,21 @@ function normalizedReaderText(original: string, sourceMap: number[]): { text: st
 }
 
 /** Group reader chars into exact per-line rects. */
-function unionLineRects(chars: ReaderChar[]): [number, number, number, number][] {
+function unionLineRects(
+  chars: ReaderChar[],
+): [number, number, number, number][] {
   const lines: [number, number, number, number][] = [];
   let line: [number, number, number, number] | null = null;
   for (const char of chars) {
     const rect = char.inlineRect ?? char.rect;
     if (rect) {
       line = line
-        ? [Math.min(line[0], rect[0]), Math.min(line[1], rect[1]), Math.max(line[2], rect[2]), Math.max(line[3], rect[3])]
+        ? [
+            Math.min(line[0], rect[0]),
+            Math.min(line[1], rect[1]),
+            Math.max(line[2], rect[2]),
+            Math.max(line[3], rect[3]),
+          ]
         : [...rect];
     }
     if (char.lineBreakAfter && line) {
@@ -474,7 +567,10 @@ function sortIndex(pageIndex: number, offset: number, top: number): string {
 export function createHighlightWriter(logger: Logger): HighlightWriter {
   return {
     async readTargets(ref: ItemRef): Promise<HighlightTargets> {
-      const item = await Zotero.Items.getByLibraryAndKeyAsync(ref.libraryID, ref.key);
+      const item = await Zotero.Items.getByLibraryAndKeyAsync(
+        ref.libraryID,
+        ref.key,
+      );
       if (!item) return { pages: [], existing: [] };
       const attachmentID = firstPdfAttachmentID(item);
       if (attachmentID === undefined) return { pages: [], existing: [] };
@@ -485,7 +581,10 @@ export function createHighlightWriter(logger: Logger): HighlightWriter {
         const result = await Zotero.PDFWorker.getFullText(attachmentID, null);
         if (result?.text) pages = splitPages(String(result.text));
       } catch (error) {
-        logger.error("PDFWorker full-text extraction failed for highlighting", error);
+        logger.error(
+          "PDFWorker full-text extraction failed for highlighting",
+          error,
+        );
       }
       return {
         pages,
@@ -500,17 +599,29 @@ export function createHighlightWriter(logger: Logger): HighlightWriter {
     ): Promise<HighlightWriteResult> {
       const created: CreatedHighlight[] = [];
       const failed: { text: string; reason: string }[] = [];
-      const item = await Zotero.Items.getByLibraryAndKeyAsync(ref.libraryID, ref.key);
+      const item = await Zotero.Items.getByLibraryAndKeyAsync(
+        ref.libraryID,
+        ref.key,
+      );
       const attachmentID = item ? firstPdfAttachmentID(item) : undefined;
       if (attachmentID === undefined) {
-        return { created, failed: planned.map((p) => ({ text: p.text, reason: "no PDF attachment" })) };
+        return {
+          created,
+          failed: planned.map((p) => ({
+            text: p.text,
+            reason: "no PDF attachment",
+          })),
+        };
       }
       const attachment = Zotero.Items.get(attachmentID);
       // Zotero 9 requires callers to provide a unique object key. Other
       // generated fields are still filled by saveFromJSON, so call through a
       // loose view matching that runtime contract.
       const annotations = Zotero.Annotations as unknown as {
-        saveFromJSON(att: Zotero.Item, json: Record<string, unknown>): Promise<Zotero.Item>;
+        saveFromJSON(
+          att: Zotero.Item,
+          json: Record<string, unknown>,
+        ): Promise<Zotero.Item>;
       };
 
       let geometry: { reader: GeometryReader | null; temporary: boolean };
@@ -530,46 +641,71 @@ export function createHighlightWriter(logger: Logger): HighlightWriter {
       try {
         for (const highlight of planned) {
           try {
-          const fallback = attachment.getAnnotations().find((annotation) => {
-            if (String(annotation.annotationType ?? "") !== "note") return false;
-            if ((annotation.annotationComment ?? "") !== `[${highlight.category}] ${highlight.text}`) return false;
-            try {
-              const position = JSON.parse(annotation.annotationPosition ?? "{}") as { rects?: number[][] };
-              return !validRects(position.rects);
-            } catch {
-              return false;
-            }
-          });
-          const match = geometry.reader
-            ? await computeRects(geometry.reader, highlight.pageIndex, highlight.text, logger)
-            : null;
-          if (match) {
-            const key = Zotero.Utilities.generateObjectKey();
-            await annotations.saveFromJSON(attachment, {
-              key,
-              type: "highlight",
-              color: highlight.color,
-              text: highlight.text,
-              pageLabel: highlight.pageLabel,
-              sortIndex: sortIndex(highlight.pageIndex, match.offset, match.top),
-              position: { pageIndex: highlight.pageIndex, rects: match.rects },
-            });
-            created.push({ ...highlight, kind: "highlight" });
-            if (fallback) {
+            const fallback = attachment.getAnnotations().find((annotation) => {
+              if (String(annotation.annotationType ?? "") !== "note")
+                return false;
+              if (
+                (annotation.annotationComment ?? "") !==
+                `[${highlight.category}] ${highlight.text}`
+              )
+                return false;
               try {
-                await fallback.eraseTx();
-              } catch (error) {
-                logger.error("replacement highlight saved but old fallback note could not be removed", error);
+                const position = JSON.parse(
+                  annotation.annotationPosition ?? "{}",
+                ) as { rects?: number[][] };
+                return !validRects(position.rects);
+              } catch {
+                return false;
               }
-            }
-          } else {
-            failed.push({
-              text: highlight.text,
-              reason: "PDF coordinates unavailable for the matched passage",
             });
-          }
+            const match = geometry.reader
+              ? await computeRects(
+                  geometry.reader,
+                  highlight.pageIndex,
+                  highlight.text,
+                  logger,
+                )
+              : null;
+            if (match) {
+              const key = Zotero.Utilities.generateObjectKey();
+              await annotations.saveFromJSON(attachment, {
+                key,
+                type: "highlight",
+                color: highlight.color,
+                text: highlight.text,
+                pageLabel: highlight.pageLabel,
+                sortIndex: sortIndex(
+                  highlight.pageIndex,
+                  match.offset,
+                  match.top,
+                ),
+                position: {
+                  pageIndex: highlight.pageIndex,
+                  rects: match.rects,
+                },
+              });
+              created.push({ ...highlight, kind: "highlight" });
+              if (fallback) {
+                try {
+                  await fallback.eraseTx();
+                } catch (error) {
+                  logger.error(
+                    "replacement highlight saved but old fallback note could not be removed",
+                    error,
+                  );
+                }
+              }
+            } else {
+              failed.push({
+                text: highlight.text,
+                reason: "PDF coordinates unavailable for the matched passage",
+              });
+            }
           } catch (error) {
-            logger.error(`creating highlight failed for item ${ref.key}`, error);
+            logger.error(
+              `creating highlight failed for item ${ref.key}`,
+              error,
+            );
             failed.push({ text: highlight.text, reason: toWriteError(error) });
           }
         }
@@ -596,9 +732,14 @@ function toWriteError(error: unknown): string {
 export function createTagWriter(logger: Logger): TagWriter {
   return {
     async addTags(ref: ItemRef, tags: string[]): Promise<{ added: string[] }> {
-      const item = await Zotero.Items.getByLibraryAndKeyAsync(ref.libraryID, ref.key);
+      const item = await Zotero.Items.getByLibraryAndKeyAsync(
+        ref.libraryID,
+        ref.key,
+      );
       if (!item) {
-        logger.log(`item ${ref.libraryID}/${ref.key} no longer exists; no tags written`);
+        logger.log(
+          `item ${ref.libraryID}/${ref.key} no longer exists; no tags written`,
+        );
         return { added: [] };
       }
       const existing = item.getTags().map((tag) => tag.tag);

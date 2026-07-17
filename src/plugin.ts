@@ -12,7 +12,10 @@ import { CREDENTIAL_IDS } from "./core/credentials";
 import { createLogger, type Logger } from "./core/errors";
 import { createDefaultRegistry } from "./providers/registry";
 import { createTransformersEmbedder } from "./retrieval/embeddings";
-import { createIndexManager, type IndexManager } from "./retrieval/indexManager";
+import {
+  createIndexManager,
+  type IndexManager,
+} from "./retrieval/indexManager";
 import { createOramaBackend } from "./retrieval/oramaBackend";
 import { defaultReranker } from "./retrieval/rerank";
 import { createSettingsApi, type SettingsApi } from "./ui/settingsApi";
@@ -29,6 +32,7 @@ import {
   createTagWriter,
   getSelectedItemRefs,
   listAllItemRefs,
+  openPdfAttachment,
 } from "./zotero/adapter";
 import { createZoteroCredentialStore } from "./zotero/credentials";
 import { createPluginFileStore } from "./zotero/files";
@@ -36,8 +40,14 @@ import { resolveAbortController, resolveFetch } from "./zotero/http";
 import { createModelCache } from "./zotero/modelCache";
 import { registerItemChangeObserver } from "./zotero/notifier";
 import { zoteroPrefStore } from "./zotero/prefs";
-import { createWorkflowOrchestrator, listTemplateWorkflows } from "./workflows/orchestrator";
-import { ensureProviderReady, type ProviderGateDeps } from "./workflows/providerGate";
+import {
+  createWorkflowOrchestrator,
+  listTemplateWorkflows,
+} from "./workflows/orchestrator";
+import {
+  ensureProviderReady,
+  type ProviderGateDeps,
+} from "./workflows/providerGate";
 import { runRetrievalProbe, type ProbeReport } from "./retrieval/probe";
 
 interface PluginInfo {
@@ -67,7 +77,11 @@ const ITEM_MENU_ID = "zotero-agent-item-menu";
 const RESULT_WINDOW_NAME = "zotero-agent-result-view";
 const MENU_LABEL = "AI Research Assistant";
 
-type ZoteroAgentGlobal = { settings: SettingsApi; workflows: WorkflowUiApi; dev?: DevApi };
+type ZoteroAgentGlobal = {
+  settings: SettingsApi;
+  workflows: WorkflowUiApi;
+  dev?: DevApi;
+};
 
 export class ZoteroAgentPlugin {
   private info: PluginInfo | null = null;
@@ -134,7 +148,8 @@ export class ZoteroAgentPlugin {
             retrieval: {
               backend: this.retrievalBackend!,
               enqueueReindex: (refs: { libraryID: number; key: string }[]) => {
-                for (const ref of refs) indexManager.onItemEvent({ kind: "changed", ref });
+                for (const ref of refs)
+                  indexManager.onItemEvent({ kind: "changed", ref });
               },
             },
           }
@@ -148,11 +163,15 @@ export class ZoteroAgentPlugin {
         probeRetrieval: () =>
           runRetrievalProbe({
             wasmPaths: `${rootURI}content/ort/`,
-            customCache: createModelCache(createPluginFileStore(logger), logger),
+            customCache: createModelCache(
+              createPluginFileStore(logger),
+              logger,
+            ),
           }),
       };
     }
-    (Zotero as unknown as { ZoteroAgent?: ZoteroAgentGlobal }).ZoteroAgent = global;
+    (Zotero as unknown as { ZoteroAgent?: ZoteroAgentGlobal }).ZoteroAgent =
+      global;
 
     this.prefPaneId = await Zotero.PreferencePanes.register({
       pluginID: this.info.id,
@@ -189,14 +208,23 @@ export class ZoteroAgentPlugin {
           onWarning: (message) => logger.log(`[index] ${message}`),
         });
       }
-      const backend = createOramaBackend({ fileStore, embedder, rerank: defaultReranker, logger });
+      const backend = createOramaBackend({
+        fileStore,
+        embedder,
+        rerank: defaultReranker,
+        logger,
+      });
       this.retrievalBackend = backend;
 
       const indexManager = createIndexManager({
         backend,
         reader,
         listAllItems: () => listAllItemRefs(logger),
-        chunkOptions: () => ({ colorSemantics: parseColorSemantics(getStringPref(prefs, PREF_KEYS.colorSemantics)) }),
+        chunkOptions: () => ({
+          colorSemantics: parseColorSemantics(
+            getStringPref(prefs, PREF_KEYS.colorSemantics),
+          ),
+        }),
         logger,
       });
       void indexManager.load();
@@ -208,7 +236,10 @@ export class ZoteroAgentPlugin {
       this.log("[index] retrieval initialized");
       return indexManager;
     } catch (error) {
-      logger.error("retrieval initialization failed; falling back to Sprint 2 behavior", error);
+      logger.error(
+        "retrieval initialization failed; falling back to Sprint 2 behavior",
+        error,
+      );
       return null;
     }
   }
@@ -307,7 +338,9 @@ export class ZoteroAgentPlugin {
     // listTemplateWorkflows() is pure/synchronous, so the menu is complete
     // even when addToWindow runs before initAsync has finished.
     for (const template of listTemplateWorkflows()) {
-      addEntry(template.label, () => this.startTemplateWorkflow(window, template));
+      addEntry(template.label, () =>
+        this.startTemplateWorkflow(window, template),
+      );
     }
     popup.appendChild(doc.createXULElement("menuseparator"));
     addEntry("Free prompt…", () => this.startFreePromptWorkflow(window));
@@ -367,6 +400,20 @@ export class ZoteroAgentPlugin {
     if (!workflows) return;
     const items = getSelectedItemRefs(window);
     if (items.length === 0) return;
+
+    // For "Highlight paper", open the PDF so the user can watch highlights
+    // appear in the reader (FR-004 convenience, NFR-013).
+    if (mode === "auto-highlight" && items[0]) {
+      const logger = this.logger;
+      const first = items[0];
+      void openPdfAttachment(
+        { libraryID: first.libraryID, key: first.key },
+        logger!,
+      ).catch(() => {
+        // Silently ignore — the workflow still runs without the reader.
+      });
+    }
+
     const session: ResultViewSession = { mode, title, items };
     workflows.setSession(session);
     void this.openResultView(window, session).then(() => {
@@ -415,11 +462,15 @@ export class ZoteroAgentPlugin {
       if (this.resultWindow && !this.resultWindow.closed) {
         this.resultWindow.focus();
         // Tell the open view to pick up the new session.
-        this.resultWindow.dispatchEvent(new Event("zotero-agent-session-changed"));
+        this.resultWindow.dispatchEvent(
+          new Event("zotero-agent-session-changed"),
+        );
         return Promise.resolve();
       }
     } catch (error) {
-      this.log(`stale result window reference discarded: ${error instanceof Error ? error.message : String(error)}`);
+      this.log(
+        `stale result window reference discarded: ${error instanceof Error ? error.message : String(error)}`,
+      );
       this.resultWindow = null;
     }
     const url = this.info.rootURI + "content/resultView.xhtml";
@@ -433,7 +484,9 @@ export class ZoteroAgentPlugin {
         session ?? null,
       );
     } catch (error) {
-      this.log(`openDialog threw: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
+      this.log(
+        `openDialog threw: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+      );
       return Promise.resolve();
     }
     this.log(`openDialog returned: ${win ? "window" : String(win)}`);
@@ -452,7 +505,8 @@ export class ZoteroAgentPlugin {
       // Defensive fallback: never block a workflow start indefinitely if the
       // view's script fails to load or the ready event is somehow missed.
       win.setTimeout(() => {
-        if (!settled) this.log("result view ready-event timed out; starting anyway");
+        if (!settled)
+          this.log("result view ready-event timed out; starting anyway");
         settle();
       }, 5000);
     });

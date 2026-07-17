@@ -45,7 +45,7 @@ npm run pack       # build + package build/zotero-agent-<version>.xpi
 Option A — install the `.xpi`:
 
 1. `npm run pack`
-2. Zotero → Tools → Plugins → gear menu → *Install Plugin From File…* → select `build/zotero-agent-0.1.0.xpi`
+2. Zotero → Tools → Plugins → gear menu → _Install Plugin From File…_ → select `build/zotero-agent-0.1.0.xpi`
 
 Option B — load from source (dev, hot rebuild via `npm start`):
 
@@ -58,7 +58,7 @@ Option B — load from source (dev, hot rebuild via `npm start`):
 3. Delete the `extensions.lastAppBuildId` and `extensions.lastAppVersion` lines from the profile's `prefs.js`.
 4. Start Zotero (`zotero -purgecaches -ZoteroDebugText` for debug output). After code changes, restart Zotero.
 
-Smoke test: Tools menu → *AI Research Assistant: Analyze selected items* shows the count of selected items.
+Smoke test: Tools menu → _AI Research Assistant: Analyze selected items_ shows the count of selected items.
 Full manual test scripts: [`docs/sprints/smoke-tests.md`](docs/sprints/smoke-tests.md).
 
 For auto-highlighting, the plugin reuses an open PDF reader or opens a temporary
@@ -93,26 +93,26 @@ and `update.json` at build time — never edit versions in the manifests by hand
    `manifest.json`'s `update_url`. Zotero's updater polls this file, so every
    release refreshes it while the `.xpi` lives on its own `v<version>` tag.
 
-Existing installs then see the new version through Tools → Plugins → *Check for
-Updates*. Verify on a clean Zotero 9 profile that a fresh install via the `.xpi`
+Existing installs then see the new version through Tools → Plugins → _Check for
+Updates_. Verify on a clean Zotero 9 profile that a fresh install via the `.xpi`
 works following this README, and that an older install updates to the new version.
 
 ## Configuration
 
-Open Edit → Settings → *AI Research Assistant*. Configuration is stored in Zotero
+Open Edit → Settings → _AI Research Assistant_. Configuration is stored in Zotero
 preferences (decision OP-006); the single source of key names and defaults is
 `PREF_KEYS`/`PREF_DEFAULTS` in `src/core/config.ts`:
 
-| Pref (under `extensions.zotero-agent.`) | Default | Meaning |
-|---|---|---|
-| `enabled` | `true` | Master switch |
-| `provider.active` | `openai-compatible` | Active AI provider id |
-| `provider.openaiCompatible.endpoint` | `""` | Base URL, e.g. `http://localhost:11434/v1` |
-| `provider.openaiCompatible.model` | `""` | Model id, e.g. `llama3` |
-| `provider.requestTimeoutMs` | `300000` | HTTP timeout for provider calls (5 minutes) |
-| `autoHighlight.contextWindowTokens` | `65536` | User cap for auto-highlight context; a lower provider-reported limit wins |
-| `autoHighlight.windowTokens` | `6000` | PDF text per auto-highlight request; small windows keep verbatim quotes accurate, larger PDFs use more windows |
-| `colorSemantics` | `""` | JSON color→category mapping (empty = defaults) |
+| Pref (under `extensions.zotero-agent.`) | Default             | Meaning                                                                                                        |
+| --------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `enabled`                               | `true`              | Master switch                                                                                                  |
+| `provider.active`                       | `openai-compatible` | Active AI provider id                                                                                          |
+| `provider.openaiCompatible.endpoint`    | `""`                | Base URL, e.g. `http://localhost:11434/v1`                                                                     |
+| `provider.openaiCompatible.model`       | `""`                | Model id, e.g. `llama3`                                                                                        |
+| `provider.requestTimeoutMs`             | `300000`            | HTTP timeout for provider calls (5 minutes)                                                                    |
+| `autoHighlight.contextWindowTokens`     | `65536`             | User cap for auto-highlight context; a lower provider-reported limit wins                                      |
+| `autoHighlight.windowTokens`            | `6000`              | PDF text per auto-highlight request; small windows keep verbatim quotes accurate, larger PDFs use more windows |
+| `colorSemantics`                        | `""`                | JSON color→category mapping (empty = defaults)                                                                 |
 
 ### Credential storage
 
