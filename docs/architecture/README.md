@@ -4,15 +4,19 @@ Five perspectives on the Zotero AI Research Assistant, derived from
 `docs/zotero_ai_research_assistant_requirements.md` (esp. §15) and aligned with the sprint
 plan in `docs/sprints/`. Diagrams are Mermaid (rendered by GitHub/most viewers).
 
-| # | Document | View | Main diagrams |
-|---|---|---|---|
-| 1 | [Context & Scope](01-context-view.md) | system context, trust boundaries, quality drivers | context diagram |
-| 2 | [Components & Modules](02-component-view.md) | building blocks, `src/` mapping, dependency rules | component diagram |
-| 3 | [Runtime & Behavior](03-runtime-view.md) | key scenarios, workflow lifecycle, concurrency | 4 sequence diagrams, state machine |
-| 4 | [Data & Persistence](04-data-view.md) | data model, storage map, privacy classification | class diagram, data-flow diagram |
-| 5 | [Deployment & Cross-Cutting](05-deployment-crosscutting-view.md) | build/release, error handling, security, offline, testing, decision log | deployment diagram |
+| #     | Document                                                           | View                                                                    | Main diagrams                         |
+| ----- | ------------------------------------------------------------------ | ----------------------------------------------------------------------- | ------------------------------------- |
+| 1     | [Context & Scope](01-context-view.md)                              | system context, trust boundaries, quality drivers                       | context diagram                       |
+| 2     | [Components & Modules](02-component-view.md)                       | building blocks, `src/` mapping, dependency rules                       | component diagram                     |
+| 3     | [Runtime & Behavior](03-runtime-view.md)                           | key scenarios, workflow lifecycle, concurrency                          | 4 sequence diagrams, state machine    |
+| 4     | [Data & Persistence](04-data-view.md)                              | data model, storage map, privacy classification                         | class diagram, data-flow diagram      |
+| 5     | [Deployment & Cross-Cutting](05-deployment-crosscutting-view.md)   | build/release, error handling, security, offline, testing, decision log | deployment diagram                    |
+| **6** | **[Holistic Architecture Reference](06-holistic-architecture.md)** | **all-in-one: package, class, sequence, component & deployment**        | **5 UML diagrams + clarifying prose** |
 
 ## Reading order
+
+**Quick start (recommended):** read [#6 (Holistic Reference)](06-holistic-architecture.md) —
+it gives you all five perspectives in one self-contained document.
 
 New to the project: 1 → 2 → 3. Implementing a sprint item: 2 (where does it live) +
 3 (how does it interact) + the sprint file. Reviewing privacy/data safety: 1 §4 + 4 §3 +

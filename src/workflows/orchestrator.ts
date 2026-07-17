@@ -16,6 +16,7 @@ import {
 } from "../core/colorSemantics";
 import {
   getBoolPref,
+  getFloatPref,
   getIntPref,
   getStringPref,
   PREF_DEFAULTS,
@@ -414,16 +415,43 @@ export function createWorkflowOrchestrator(
     signal: AbortSignal,
     maxTokens?: number,
     responseFormat?: CompletionRequest["responseFormat"],
-  ): Promise<CompletionResult> =>
-    provider.complete({
+  ): Promise<CompletionResult> => {
+    // Global model-parameter prefs (unset → undefined → omitted from API request).
+    const rawTemperature = getFloatPref(deps.prefs, PREF_KEYS.modelTemperature);
+    const temperature =
+      rawTemperature !== undefined
+        ? Math.max(0, Math.min(2, rawTemperature))
+        : undefined;
+    const rawTopP = getFloatPref(deps.prefs, PREF_KEYS.modelTopP);
+    const topP =
+      rawTopP !== undefined ? Math.max(0, Math.min(1, rawTopP)) : undefined;
+    const globalMaxTokens = getFloatPref(
+      deps.prefs,
+      PREF_KEYS.modelMaxOutputTokens,
+    );
+    const effectiveMaxTokens =
+      globalMaxTokens !== undefined
+        ? Math.floor(
+            maxTokens !== undefined
+              ? Math.min(maxTokens, globalMaxTokens)
+              : globalMaxTokens,
+          )
+        : maxTokens;
+
+    return provider.complete({
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
       signal,
-      ...(maxTokens !== undefined ? { maxTokens } : {}),
+      ...(effectiveMaxTokens !== undefined
+        ? { maxTokens: effectiveMaxTokens }
+        : {}),
+      ...(temperature !== undefined ? { temperature } : {}),
+      ...(topP !== undefined ? { topP } : {}),
       ...(responseFormat !== undefined ? { responseFormat } : {}),
     });
+  };
 
   const complete = async (
     provider: AIProvider,

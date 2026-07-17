@@ -57,6 +57,7 @@ export function buildChatCompletionRequest(
   };
   if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens;
   if (request.temperature !== undefined) body.temperature = request.temperature;
+  if (request.topP !== undefined) body.top_p = request.topP;
   if (request.responseFormat !== undefined)
     body.response_format = request.responseFormat;
   return {

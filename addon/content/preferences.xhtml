@@ -1,16 +1,17 @@
-<vbox id="zotero-agent-prefs"
-      xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
-      xmlns:html="http://www.w3.org/1999/xhtml">
+<vbox id="zotero-agent-prefs" xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+  xmlns:html="http://www.w3.org/1999/xhtml">
 
   <groupbox>
-    <label><html:h2>AI Provider</html:h2></label>
+    <label>
+      <html:h2>AI Provider</html:h2>
+    </label>
     <html:p class="za-hint">Connect the assistant to an AI service. This works with OpenAI and
       with local services such as Ollama or LM Studio.</html:p>
 
     <html:div class="za-row">
       <html:label for="za-provider">Provider</html:label>
       <menulist id="za-provider" preference="extensions.zotero-agent.provider.active" native="true">
-        <menupopup id="za-provider-popup"/>
+        <menupopup id="za-provider-popup" />
       </menulist>
     </html:div>
 
@@ -18,36 +19,63 @@
       <html:label for="za-endpoint">Endpoint URL</html:label>
       <html:input id="za-endpoint" type="text" class="za-wide"
         preference="extensions.zotero-agent.provider.openaiCompatible.endpoint"
-        placeholder="e.g. http://localhost:11434/v1 or https://api.openai.com/v1"/>
+        placeholder="e.g. http://localhost:11434/v1 or https://api.openai.com/v1" />
     </html:div>
 
     <html:div class="za-row">
       <html:label for="za-model">Model</html:label>
       <html:input id="za-model" type="text" class="za-wide"
-        preference="extensions.zotero-agent.provider.openaiCompatible.model"
-        placeholder="e.g. gpt-4o-mini or llama3"/>
+        preference="extensions.zotero-agent.provider.openaiCompatible.model" placeholder="e.g. gpt-4o-mini or llama3" />
     </html:div>
 
     <html:div class="za-row">
       <html:label for="za-apikey">API key</html:label>
-      <html:input id="za-apikey" type="password" class="za-wide"
-        placeholder="Leave empty for local services"/>
-      <button id="za-apikey-clear" label="Remove key"/>
+      <html:input id="za-apikey" type="password" class="za-wide" placeholder="Leave empty for local services" />
+      <button id="za-apikey-clear" label="Remove key" />
     </html:div>
     <html:p id="za-key-storage-note" class="za-hint"></html:p>
 
     <html:div class="za-row">
-      <button id="za-test-connection" label="Test connection"/>
+      <button id="za-test-connection" label="Test connection" />
       <html:span id="za-test-result" class="za-status"></html:span>
     </html:div>
   </groupbox>
 
+  <groupbox id="za-model-params-groupbox">
+    <label>
+      <html:h2>Model parameters</html:h2>
+    </label>
+    <html:p class="za-hint">These are sent to the model on every request.
+      Leave a field empty to use the provider's default.
+      Temperature and Top P are alternatives — set only one.</html:p>
+
+    <html:div class="za-row">
+      <html:label for="za-temperature">Temperature</html:label>
+      <html:input id="za-temperature" type="number" min="0" max="2" step="0.1" class="za-wide"
+        preference="extensions.zotero-agent.model.temperature" placeholder="API default" />
+    </html:div>
+
+    <html:div class="za-row">
+      <html:label for="za-topp">Top P</html:label>
+      <html:input id="za-topp" type="number" min="0" max="1" step="0.05" class="za-wide"
+        preference="extensions.zotero-agent.model.topP" placeholder="API default" />
+    </html:div>
+
+    <html:div class="za-row">
+      <html:label for="za-max-output-tokens">Max output tokens</html:label>
+      <html:input id="za-max-output-tokens" type="number" min="1" step="256" class="za-wide"
+        preference="extensions.zotero-agent.model.maxOutputTokens" placeholder="API default" />
+    </html:div>
+  </groupbox>
+
   <groupbox id="za-auto-highlight-groupbox">
-    <label><html:h2>Auto-highlighting</html:h2></label>
+    <label>
+      <html:h2>Auto-highlighting</html:h2>
+    </label>
     <html:div class="za-row">
       <html:label for="za-highlight-context-window">Maximum model context (tokens)</html:label>
       <html:input id="za-highlight-context-window" type="number" min="8192" step="1024"
-        preference="extensions.zotero-agent.autoHighlight.contextWindowTokens"/>
+        preference="extensions.zotero-agent.autoHighlight.contextWindowTokens" />
     </html:div>
     <html:p class="za-hint">Auto-highlighting sends the whole PDF when it fits this limit.
       If the provider reports a smaller context window, the smaller limit is used. Larger PDFs
@@ -55,35 +83,39 @@
     <html:div class="za-row">
       <html:label for="za-highlight-window">Text per request (tokens)</html:label>
       <html:input id="za-highlight-window" type="number" min="1024" step="512"
-        preference="extensions.zotero-agent.autoHighlight.windowTokens"/>
+        preference="extensions.zotero-agent.autoHighlight.windowTokens" />
     </html:div>
     <html:p class="za-hint">How much PDF text each highlighting request sees. Smaller values
       keep quotes accurate; larger values need fewer requests.</html:p>
   </groupbox>
 
   <groupbox id="za-colors-groupbox">
-    <label><html:h2>Highlight colors</html:h2></label>
+    <label>
+      <html:h2>Highlight colors</html:h2>
+    </label>
     <html:p class="za-hint">Tell the assistant what each highlight color means in your notes.
       A color can stand for more than one meaning.</html:p>
     <html:div id="za-color-rows"></html:div>
     <html:div class="za-row">
-      <button id="za-colors-reset" label="Reset to defaults"/>
+      <button id="za-colors-reset" label="Reset to defaults" />
     </html:div>
   </groupbox>
 
   <groupbox id="za-index-groupbox">
-    <label><html:h2>Local index</html:h2></label>
+    <label>
+      <html:h2>Local index</html:h2>
+    </label>
     <html:p class="za-hint">The assistant keeps a local, searchable copy of your papers, notes,
       and highlights so it can work with long PDFs without sending the whole document each time.
       Everything stays on this computer.</html:p>
 
     <html:p id="za-index-coverage" class="za-hint"></html:p>
     <html:p id="za-index-updated" class="za-hint"></html:p>
-    <html:progress id="za-index-progress" max="100" value="0" hidden="hidden"/>
+    <html:progress id="za-index-progress" max="100" value="0" hidden="hidden" />
 
     <html:div class="za-row">
-      <button id="za-index-rebuild" label="Rebuild index"/>
-      <button id="za-index-cancel" label="Cancel" hidden="hidden"/>
+      <button id="za-index-rebuild" label="Rebuild index" />
+      <button id="za-index-cancel" label="Cancel" hidden="hidden" />
       <html:span id="za-index-status" class="za-status"></html:span>
     </html:div>
   </groupbox>

@@ -48,3 +48,8 @@ pref("extensions.zotero-agent.retrieval.passagesPerItem", 12);
 // Exposes Zotero.ZoteroAgent.dev.probeRetrieval() for the day-1 wasm runtime
 // probe (S3-03); off by default, dev/QA only.
 pref("extensions.zotero-agent.devTools", false);
+
+// Model parameters sent on every request; empty means "use provider default".
+pref("extensions.zotero-agent.model.temperature", "");
+pref("extensions.zotero-agent.model.topP", "");
+pref("extensions.zotero-agent.model.maxOutputTokens", "");

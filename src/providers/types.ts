@@ -26,6 +26,9 @@ export interface CompletionRequest {
   messages: ChatMessage[];
   maxTokens?: number;
   temperature?: number;
+  /** Nucleus sampling probability (0–1). Omitted from the request when
+   * undefined, so the provider default applies. */
+  topP?: number;
   signal?: AbortSignal;
   /** OpenAI structured outputs (https://platform.openai.com/docs/guides/structured-outputs).
    * When set, the provider sends `response_format` in the request body so the

@@ -44,6 +44,15 @@ export const PREF_KEYS = {
   /** Exposes `Zotero.ZoteroAgent.dev.probeRetrieval()` for the day-1 wasm
    * runtime probe (S3-03); off by default, dev/QA only. */
   devTools: `${PREFS_PREFIX}.devTools`,
+  /** Sampling temperature (0–2). Omitted from API requests when unset, so the
+   * provider default applies. */
+  modelTemperature: `${PREFS_PREFIX}.model.temperature`,
+  /** Nucleus sampling threshold (0–1). Omitted from API requests when unset. */
+  modelTopP: `${PREFS_PREFIX}.model.topP`,
+  /** Global ceiling for per-request max output tokens. Per-request budgets
+   * (e.g. auto-highlight) take precedence when they are tighter. Omitted when
+   * unset. */
+  modelMaxOutputTokens: `${PREFS_PREFIX}.model.maxOutputTokens`,
 } as const;
 
 /** Typed defaults for every key; invalid stored values fall back to these. */
@@ -63,6 +72,9 @@ export const PREF_DEFAULTS: Record<string, string | number | boolean> = {
   [PREF_KEYS.retrievalEmbeddings]: false,
   [PREF_KEYS.retrievalPassagesPerItem]: 12,
   [PREF_KEYS.devTools]: false,
+  [PREF_KEYS.modelTemperature]: "",
+  [PREF_KEYS.modelTopP]: "",
+  [PREF_KEYS.modelMaxOutputTokens]: "",
 };
 
 export interface PrefStore {
@@ -71,20 +83,48 @@ export interface PrefStore {
   clear(key: string): void;
 }
 
-export function getStringPref(store: PrefStore, key: string, fallback = ""): string {
+export function getStringPref(
+  store: PrefStore,
+  key: string,
+  fallback = "",
+): string {
   const value = store.get(key);
   return typeof value === "string" ? value : fallback;
 }
 
-export function getBoolPref(store: PrefStore, key: string, fallback = false): boolean {
+export function getBoolPref(
+  store: PrefStore,
+  key: string,
+  fallback = false,
+): boolean {
   const value = store.get(key);
   return typeof value === "boolean" ? value : fallback;
 }
 
-export function getIntPref(store: PrefStore, key: string, fallback: number): number {
+export function getIntPref(
+  store: PrefStore,
+  key: string,
+  fallback: number,
+): number {
   const value = store.get(key);
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     return fallback;
   }
   return Math.floor(value);
+}
+
+/** Read a float-valued preference. Returns `undefined` when the stored value
+ * is empty, missing, or not a non-negative finite number — callers treat
+ * `undefined` as "not configured" and omit the parameter from API requests.
+ * Unlike `getIntPref`, this preserves decimal precision (needed for
+ * temperature and topP). */
+export function getFloatPref(
+  store: PrefStore,
+  key: string,
+): number | undefined {
+  const value = store.get(key);
+  if (value === "" || value === null || value === undefined) return undefined;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
 }

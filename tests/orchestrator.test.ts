@@ -1206,3 +1206,139 @@ describe("auto-highlight workflow (S5-02)", () => {
     );
   });
 });
+
+describe("model parameter injection", () => {
+  it("omits temperature, topP, and maxTokens when all prefs are unset", async () => {
+    const provider = fakeProvider(async () => ({ text: "ok" }));
+    const { orchestrator } = setup({
+      provider,
+      prefs: {
+        [PREF_KEYS.modelTemperature]: "",
+        [PREF_KEYS.modelTopP]: "",
+        [PREF_KEYS.modelMaxOutputTokens]: "",
+      },
+    });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: refs,
+    });
+    const request = vi.mocked(provider.complete).mock.calls[0]![0];
+    expect(request.temperature).toBeUndefined();
+    expect(request.topP).toBeUndefined();
+    // Only the caller-provided maxTokens may be set; not a global override
+    expect(request.maxTokens).toBeUndefined();
+  });
+
+  it("injects temperature when the pref is set", async () => {
+    const provider = fakeProvider(async () => ({ text: "ok" }));
+    const { orchestrator } = setup({
+      provider,
+      prefs: { [PREF_KEYS.modelTemperature]: 0.3 },
+    });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: refs,
+    });
+    const request = vi.mocked(provider.complete).mock.calls[0]![0];
+    expect(request.temperature).toBe(0.3);
+    expect(request.topP).toBeUndefined();
+  });
+
+  it("injects topP when the pref is set", async () => {
+    const provider = fakeProvider(async () => ({ text: "ok" }));
+    const { orchestrator } = setup({
+      provider,
+      prefs: { [PREF_KEYS.modelTopP]: 0.9 },
+    });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: refs,
+    });
+    const request = vi.mocked(provider.complete).mock.calls[0]![0];
+    expect(request.topP).toBe(0.9);
+    expect(request.temperature).toBeUndefined();
+  });
+
+  it("injects maxTokens when the global pref is set", async () => {
+    const provider = fakeProvider(async () => ({ text: "ok" }));
+    const { orchestrator } = setup({
+      provider,
+      prefs: { [PREF_KEYS.modelMaxOutputTokens]: 4096 },
+    });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: refs,
+    });
+    const request = vi.mocked(provider.complete).mock.calls[0]![0];
+    expect(request.maxTokens).toBe(4096);
+  });
+
+  it("uses min(global, caller) as maxTokens ceiling", async () => {
+    const provider = fakeProvider(async () => ({ text: "ok" }));
+    const { orchestrator } = setup({
+      provider,
+      prefs: {
+        [PREF_KEYS.modelMaxOutputTokens]: 4096,
+        [PREF_KEYS.colorSemantics]: JSON.stringify({
+          "#ff0000": ["methodology"],
+        }),
+      },
+      highlightWriter: fakeHighlightWriter(),
+    });
+    // Auto-highlight passes HIGHLIGHT_COMPLETION_TOKENS (8192) as caller maxTokens.
+    // Global 4096 should act as a tighter ceiling.
+    await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+    const request = vi.mocked(provider.complete).mock.calls[0]![0];
+    expect(request.maxTokens).toBe(4096);
+  });
+
+  it("passes caller maxTokens unchanged when global is unset", async () => {
+    const provider = fakeProvider(async () => ({ text: "ok" }));
+    const { orchestrator } = setup({
+      provider,
+      prefs: {
+        [PREF_KEYS.colorSemantics]: JSON.stringify({
+          "#ff0000": ["methodology"],
+        }),
+      },
+      highlightWriter: fakeHighlightWriter(),
+    });
+    await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+    const request = vi.mocked(provider.complete).mock.calls[0]![0];
+    expect(request.maxTokens).toBe(8192);
+  });
+
+  it("clamps temperature to [0, 2]", async () => {
+    const provider = fakeProvider(async () => ({ text: "ok" }));
+    const { orchestrator } = setup({
+      provider,
+      prefs: { [PREF_KEYS.modelTemperature]: 5 },
+    });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: refs,
+    });
+    const request = vi.mocked(provider.complete).mock.calls[0]![0];
+    expect(request.temperature).toBe(2);
+  });
+
+  it("clamps topP to [0, 1]", async () => {
+    const provider = fakeProvider(async () => ({ text: "ok" }));
+    const { orchestrator } = setup({
+      provider,
+      prefs: { [PREF_KEYS.modelTopP]: 3 },
+    });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: refs,
+    });
+    const request = vi.mocked(provider.complete).mock.calls[0]![0];
+    expect(request.topP).toBe(1);
+  });
+});

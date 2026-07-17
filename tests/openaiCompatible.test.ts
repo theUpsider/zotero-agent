@@ -118,6 +118,7 @@ describe("buildChatCompletionRequest", () => {
       "stream",
       "max_tokens",
       "temperature",
+      "top_p",
       "response_format",
     ]);
     for (const key of Object.keys(body)) {
@@ -126,6 +127,25 @@ describe("buildChatCompletionRequest", () => {
     expect(body).not.toHaveProperty("input");
     expect(body).not.toHaveProperty("embedding");
     expect(body).not.toHaveProperty("vector");
+  });
+
+  it("serializes topP as top_p when set", () => {
+    const { init } = buildChatCompletionRequest(settings, {
+      messages: [{ role: "user", content: "hi" }],
+      topP: 0.9,
+    });
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.top_p).toBe(0.9);
+  });
+
+  it("omits top_p when topP is undefined", () => {
+    const { init } = buildChatCompletionRequest(settings, {
+      messages: [{ role: "user", content: "hi" }],
+      temperature: 0.5,
+    });
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("top_p");
+    expect(body.temperature).toBe(0.5);
   });
 
   it("serializes responseFormat as response_format in the request body", () => {

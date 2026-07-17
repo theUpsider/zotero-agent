@@ -359,8 +359,39 @@
     window.addEventListener("unload", () => clearInterval(interval));
   }
 
+  /* ---------- Model parameters section ---------- */
+
+  function initModelParamsSection() {
+    const fields = [
+      {
+        id: "za-temperature",
+        pref: "extensions.zotero-agent.model.temperature",
+      },
+      { id: "za-topp", pref: "extensions.zotero-agent.model.topP" },
+      {
+        id: "za-max-output-tokens",
+        pref: "extensions.zotero-agent.model.maxOutputTokens",
+      },
+    ];
+    for (const { id, pref } of fields) {
+      const input = $(id);
+      if (!input) continue;
+      // When the stored pref is "" (unset), clear the input so the placeholder
+      // ("API default") is visible instead of showing 0.
+      const value = Zotero.Prefs.get(pref, true);
+      if (value === "" || value === undefined || value === null) {
+        input.value = "";
+      }
+      // Persist "" when the user clears the field (sets it to empty string).
+      input.addEventListener("change", () => {
+        if (input.value === "") Zotero.Prefs.set(pref, "", true);
+      });
+    }
+  }
+
   ensureReady(() => {
     initProviderSection();
+    initModelParamsSection();
     initColorSection();
     initIndexSection();
   });
