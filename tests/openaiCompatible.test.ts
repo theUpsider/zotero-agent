@@ -40,18 +40,29 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function provider(fetch: FetchLike, overrides: Partial<ProviderSettings> = {}) {
-  return new OpenAICompatibleProvider({ ...settings, ...overrides }, { fetch, logger: noopLogger });
+  return new OpenAICompatibleProvider(
+    { ...settings, ...overrides },
+    { fetch, logger: noopLogger },
+  );
 }
 
 describe("normalizeBaseUrl", () => {
   it("trims and strips trailing slashes", () => {
-    expect(normalizeBaseUrl(" http://localhost:11434/v1/ ")).toBe("http://localhost:11434/v1");
-    expect(normalizeBaseUrl("https://api.openai.com/v1")).toBe("https://api.openai.com/v1");
+    expect(normalizeBaseUrl(" http://localhost:11434/v1/ ")).toBe(
+      "http://localhost:11434/v1",
+    );
+    expect(normalizeBaseUrl("https://api.openai.com/v1")).toBe(
+      "https://api.openai.com/v1",
+    );
   });
 
   it("rejects non-http endpoints", () => {
-    expect(() => normalizeBaseUrl("localhost:11434")).toThrow(InvalidConfigError);
-    expect(() => normalizeBaseUrl("ftp://example.org")).toThrow(InvalidConfigError);
+    expect(() => normalizeBaseUrl("localhost:11434")).toThrow(
+      InvalidConfigError,
+    );
+    expect(() => normalizeBaseUrl("ftp://example.org")).toThrow(
+      InvalidConfigError,
+    );
   });
 });
 
@@ -83,7 +94,9 @@ describe("buildChatCompletionRequest", () => {
       { ...settings, apiKey: undefined },
       { messages: [] },
     );
-    expect((withoutKey.init.headers as Record<string, string>).Authorization).toBeUndefined();
+    expect(
+      (withoutKey.init.headers as Record<string, string>).Authorization,
+    ).toBeUndefined();
   });
 
   // S3-03 AC: "no code path sends embeddings or index files to any provider" —
@@ -99,13 +112,37 @@ describe("buildChatCompletionRequest", () => {
     expect(url).not.toMatch(/embed/i);
     expect(url).toMatch(/\/chat\/completions$/);
     const body = JSON.parse(init.body as string) as Record<string, unknown>;
-    const allowedKeys = new Set(["model", "messages", "stream", "max_tokens", "temperature"]);
+    const allowedKeys = new Set([
+      "model",
+      "messages",
+      "stream",
+      "max_tokens",
+      "temperature",
+      "response_format",
+    ]);
     for (const key of Object.keys(body)) {
       expect(allowedKeys.has(key)).toBe(true);
     }
     expect(body).not.toHaveProperty("input");
     expect(body).not.toHaveProperty("embedding");
     expect(body).not.toHaveProperty("vector");
+  });
+
+  it("serializes responseFormat as response_format in the request body", () => {
+    const schema = {
+      type: "json_schema" as const,
+      json_schema: {
+        name: "test",
+        strict: true,
+        schema: { type: "object", properties: {} },
+      },
+    };
+    const { init } = buildChatCompletionRequest(settings, {
+      messages: [{ role: "user", content: "hi" }],
+      responseFormat: schema,
+    });
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.response_format).toEqual(schema);
   });
 });
 
@@ -118,8 +155,12 @@ describe("response parsing", () => {
   });
 
   it("throws ProviderResponseError on malformed bodies", () => {
-    expect(() => parseChatCompletionResponse({ choices: [] })).toThrow(ProviderResponseError);
-    expect(() => parseChatCompletionResponse(null)).toThrow(ProviderResponseError);
+    expect(() => parseChatCompletionResponse({ choices: [] })).toThrow(
+      ProviderResponseError,
+    );
+    expect(() => parseChatCompletionResponse(null)).toThrow(
+      ProviderResponseError,
+    );
   });
 
   it("marks a reply cut off at the completion-token limit as truncated", () => {
@@ -134,7 +175,11 @@ describe("response parsing", () => {
   });
 
   it("parses the models fixture", () => {
-    expect(parseModelsResponse(modelsFixture)).toEqual(["llama3", "mistral", "gpt-4o-mini"]);
+    expect(parseModelsResponse(modelsFixture)).toEqual([
+      "llama3",
+      "mistral",
+      "gpt-4o-mini",
+    ]);
   });
 
   it("parses common model context-window metadata fields", () => {
@@ -146,7 +191,12 @@ describe("response parsing", () => {
     ]) {
       expect(
         parseModelCapabilitiesResponse(
-          { data: [{ id: "other", [field]: 1 }, { id: "llama3", [field]: 32_768 }] },
+          {
+            data: [
+              { id: "other", [field]: 1 },
+              { id: "llama3", [field]: 32_768 },
+            ],
+          },
           "llama3",
         ),
       ).toEqual({ contextWindowTokens: 32_768 });
@@ -157,36 +207,48 @@ describe("response parsing", () => {
         "llama3",
       ),
     ).toEqual({ contextWindowTokens: 65_536 });
-    expect(parseModelCapabilitiesResponse(modelsFixture, "llama3")).toBeUndefined();
+    expect(
+      parseModelCapabilitiesResponse(modelsFixture, "llama3"),
+    ).toBeUndefined();
   });
 });
 
 describe("classifyHttpError", () => {
   it("maps 401/403 to AuthenticationError", () => {
-    expect(classifyHttpError(401, JSON.stringify(error401Fixture), settings)).toBeInstanceOf(
+    expect(
+      classifyHttpError(401, JSON.stringify(error401Fixture), settings),
+    ).toBeInstanceOf(AuthenticationError);
+    expect(classifyHttpError(403, "", settings)).toBeInstanceOf(
       AuthenticationError,
     );
-    expect(classifyHttpError(403, "", settings)).toBeInstanceOf(AuthenticationError);
   });
 
   it("maps a model-mentioning 404 to ModelNotFoundError", () => {
-    const error = classifyHttpError(404, JSON.stringify(ollamaModelMissingFixture), settings);
+    const error = classifyHttpError(
+      404,
+      JSON.stringify(ollamaModelMissingFixture),
+      settings,
+    );
     expect(error).toBeInstanceOf(ModelNotFoundError);
     expect(error.message).toContain("llama3");
   });
 
   it("maps plain 404 and 5xx to ProviderUnavailableError", () => {
-    expect(classifyHttpError(404, "not found", settings)).toBeInstanceOf(ProviderUnavailableError);
-    expect(classifyHttpError(500, "oops", settings)).toBeInstanceOf(ProviderUnavailableError);
+    expect(classifyHttpError(404, "not found", settings)).toBeInstanceOf(
+      ProviderUnavailableError,
+    );
+    expect(classifyHttpError(500, "oops", settings)).toBeInstanceOf(
+      ProviderUnavailableError,
+    );
   });
 
   it("classifies only explicit context-size rejections as ContextLimitError", () => {
     expect(
       classifyHttpError(400, "maximum context length is 8192 tokens", settings),
     ).toBeInstanceOf(ContextLimitError);
-    expect(classifyHttpError(413, "request too large", settings)).toBeInstanceOf(
-      ContextLimitError,
-    );
+    expect(
+      classifyHttpError(413, "request too large", settings),
+    ).toBeInstanceOf(ContextLimitError);
     expect(classifyHttpError(400, "bad request", settings)).toBeInstanceOf(
       ProviderUnavailableError,
     );
@@ -226,9 +288,9 @@ describe("OpenAICompatibleProvider.complete", () => {
     const fetch = vi.fn(async () => {
       throw new TypeError("NetworkError when attempting to fetch resource.");
     });
-    await expect(provider(fetch).complete({ messages: [] })).rejects.toBeInstanceOf(
-      ProviderUnavailableError,
-    );
+    await expect(
+      provider(fetch).complete({ messages: [] }),
+    ).rejects.toBeInstanceOf(ProviderUnavailableError);
   });
 
   it("reports request timeouts distinctly from network failures", async () => {
@@ -240,8 +302,11 @@ describe("OpenAICompatibleProvider.complete", () => {
             reject(new DOMException("aborted", "AbortError")),
           );
         });
-      const pending = provider(fetch, { timeoutMs: 50 }).complete({ messages: [] });
-      const assertion = expect(pending).rejects.toBeInstanceOf(ProviderTimeoutError);
+      const pending = provider(fetch, { timeoutMs: 50 }).complete({
+        messages: [],
+      });
+      const assertion =
+        expect(pending).rejects.toBeInstanceOf(ProviderTimeoutError);
       await vi.advanceTimersByTimeAsync(60);
       await assertion;
     } finally {
@@ -267,13 +332,17 @@ describe("OpenAICompatibleProvider.validateConfig", () => {
     );
     const instance = provider(fetch);
     expect(await instance.listModels()).toEqual(["llama3"]);
-    expect(await instance.getModelCapabilities()).toEqual({ contextWindowTokens: 16_384 });
+    expect(await instance.getModelCapabilities()).toEqual({
+      contextWindowTokens: 16_384,
+    });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("reports ModelNotFoundError when the model is absent from /models", async () => {
     const fetch = vi.fn(async () => jsonResponse(modelsFixture));
-    const result = await provider(fetch, { model: "missing-model" }).validateConfig();
+    const result = await provider(fetch, {
+      model: "missing-model",
+    }).validateConfig();
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toBeInstanceOf(ModelNotFoundError);
   });
@@ -287,7 +356,8 @@ describe("OpenAICompatibleProvider.validateConfig", () => {
 
   it("falls back to a 1-token completion when /models is unsupported", async () => {
     const fetch = vi.fn(async (url: string, _init?: RequestInit) => {
-      if (url.endsWith("/models")) return new Response("not found", { status: 404 });
+      if (url.endsWith("/models"))
+        return new Response("not found", { status: 404 });
       return jsonResponse(chatCompletionFixture);
     });
     const result = await provider(fetch).validateConfig();
@@ -299,7 +369,10 @@ describe("OpenAICompatibleProvider.validateConfig", () => {
 
   it("reports InvalidConfigError without touching the network when unconfigured", async () => {
     const fetch = vi.fn();
-    const result = await provider(fetch, { endpoint: "", model: "" }).validateConfig();
+    const result = await provider(fetch, {
+      endpoint: "",
+      model: "",
+    }).validateConfig();
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toBeInstanceOf(InvalidConfigError);
     expect(fetch).not.toHaveBeenCalled();
@@ -311,6 +384,7 @@ describe("OpenAICompatibleProvider.validateConfig", () => {
     });
     const result = await provider(fetch).validateConfig();
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toBeInstanceOf(ProviderUnavailableError);
+    if (!result.ok)
+      expect(result.error).toBeInstanceOf(ProviderUnavailableError);
   });
 });

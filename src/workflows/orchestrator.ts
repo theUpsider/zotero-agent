@@ -14,12 +14,26 @@ import {
   type Category,
   type ColorSemantics,
 } from "../core/colorSemantics";
-import { getBoolPref, getIntPref, getStringPref, PREF_DEFAULTS, PREF_KEYS, type PrefStore } from "../core/config";
-import { AgentError, ContextLimitError, toUserMessage, type ErrorCode, type Logger } from "../core/errors";
+import {
+  getBoolPref,
+  getIntPref,
+  getStringPref,
+  PREF_DEFAULTS,
+  PREF_KEYS,
+  type PrefStore,
+} from "../core/config";
+import {
+  AgentError,
+  ContextLimitError,
+  toUserMessage,
+  type ErrorCode,
+  type Logger,
+} from "../core/errors";
 import { markdownToHtml } from "../core/markdown";
 import { approxTokens, tokenBudgetToChars } from "../core/tokens";
 import {
   composeFreePrompt,
+  getFreePromptSystemPrompt,
   composeItemContexts,
   composeTemplatePrompt,
   type ComposedContext,
@@ -31,10 +45,23 @@ import {
   composeNoteFromAnnotationsPrompt,
   composeSummarizeNotesPrompt,
   composeTagSuggestionPrompt,
+  getAnalysisSystemPrompt,
+  getHighlightSystemPrompt,
+  getNoteFromAnnotationsSystemPrompt,
+  getSummarizeNotesSystemPrompt,
+  getTagSuggestionSystemPrompt,
   parseTagSuggestions,
 } from "../prompts/scholarly";
-import { getTemplate, PROMPT_TEMPLATES, type PromptTemplate } from "../prompts/templates";
-import type { AIProvider, CompletionResult } from "../providers/types";
+import {
+  getTemplate,
+  PROMPT_TEMPLATES,
+  type PromptTemplate,
+} from "../prompts/templates";
+import type {
+  AIProvider,
+  CompletionRequest,
+  CompletionResult,
+} from "../providers/types";
 import type { RetrievalBackend, RetrievalResult } from "../retrieval/types";
 import type {
   HighlightWriter,
@@ -57,7 +84,11 @@ import {
   rankHighlightWindows,
   splitHighlightWindow,
 } from "./highlightContext";
-import type { WorkflowId, WorkflowResult, WorkflowResultSection } from "./types";
+import type {
+  WorkflowId,
+  WorkflowResult,
+  WorkflowResultSection,
+} from "./types";
 
 export type WorkflowRunRequest =
   | { kind: "template"; templateId: string; items: ItemRef[] }
@@ -73,7 +104,10 @@ export type WorkflowRunRequest =
  * post-process the reply (tag writing). Free-prompt is the one exception —
  * a single combined call — and stays on its own path. */
 interface PerItemPlan {
-  buildPrompt: (item: ComposedItemContext, ctx: ItemContext) => string;
+  buildPrompt: (
+    item: ComposedItemContext,
+    ctx: ItemContext,
+  ) => { system: string; user: string };
   /** Return a message to record instead of calling the provider (e.g. "no
    * annotations to process", S4-03) — never an empty AI call. */
   skip?: (ctx: ItemContext) => string | null;
@@ -143,7 +177,10 @@ function retrievalQueryText(
 ): string {
   switch (request.kind) {
     case "template":
-      return (template as PromptTemplate).retrievalHint ?? (template as PromptTemplate).label;
+      return (
+        (template as PromptTemplate).retrievalHint ??
+        (template as PromptTemplate).label
+      );
     case "free-prompt":
       return request.prompt;
     case "analyze-papers":
@@ -167,31 +204,61 @@ function planFor(
   tagWriter: TagWriter | undefined,
 ): PerItemPlan {
   switch (request.kind) {
-    case "template":
-      return { buildPrompt: (item) => composeTemplatePrompt(template as PromptTemplate, item.contextText) };
-    case "analyze-papers":
-      return { buildPrompt: (item) => composeAnalysisPrompt(item.contextText, categories) };
-    case "generate-notes":
+    case "template": {
+      const tmpl = template as PromptTemplate;
       return {
-        buildPrompt: (item) => composeNoteFromAnnotationsPrompt(item.contextText),
+        buildPrompt: (item) => ({
+          system: tmpl.systemPrompt,
+          user: composeTemplatePrompt(tmpl, item.contextText),
+        }),
+      };
+    }
+    case "analyze-papers": {
+      const sysPrompt = getAnalysisSystemPrompt(categories);
+      return {
+        buildPrompt: (item) => ({
+          system: sysPrompt,
+          user: composeAnalysisPrompt(item.contextText, categories),
+        }),
+      };
+    }
+    case "generate-notes": {
+      const sysPrompt = getNoteFromAnnotationsSystemPrompt();
+      return {
+        buildPrompt: (item) => ({
+          system: sysPrompt,
+          user: composeNoteFromAnnotationsPrompt(item.contextText),
+        }),
         skip: (ctx) =>
           ctx.annotations.length === 0
             ? "This item has no annotations or highlights to turn into a note."
             : null,
       };
-    case "summarize-notes":
+    }
+    case "summarize-notes": {
+      const sysPrompt = getSummarizeNotesSystemPrompt();
       return {
-        buildPrompt: (item) => composeSummarizeNotesPrompt(item.contextText),
+        buildPrompt: (item) => ({
+          system: sysPrompt,
+          user: composeSummarizeNotesPrompt(item.contextText),
+        }),
         skip: (ctx) =>
           ctx.notes.length === 0 && ctx.annotations.length === 0
             ? "This item has no notes or annotations to summarize."
             : null,
       };
+    }
     case "suggest-tags":
       return {
-        buildPrompt: (item, ctx) => composeTagSuggestionPrompt(item.contextText, ctx.tags),
+        buildPrompt: (item, ctx) => ({
+          system: getTagSuggestionSystemPrompt(ctx.tags),
+          user: composeTagSuggestionPrompt(item.contextText),
+        }),
         transform: async (ctx, markdown) => {
-          const { added } = await (tagWriter as TagWriter).addTags(ctx.ref, parseTagSuggestions(markdown));
+          const { added } = await (tagWriter as TagWriter).addTags(
+            ctx.ref,
+            parseTagSuggestions(markdown),
+          );
           return added.length > 0
             ? `Added ${added.length} tag${added.length === 1 ? "" : "s"}: ${added.join(", ")}`
             : "No new tags were added.";
@@ -200,7 +267,10 @@ function planFor(
     case "free-prompt":
     case "auto-highlight":
       // Both run on their own path (runFreePrompt / runAutoHighlight).
-      throw new AgentError("invalid-config", `${request.kind} has no per-item plan.`);
+      throw new AgentError(
+        "invalid-config",
+        `${request.kind} has no per-item plan.`,
+      );
   }
 }
 
@@ -258,7 +328,10 @@ async function retrieveContext(
   try {
     indexedKeys = new Set(await retrieval.backend.listIndexedItemKeys());
   } catch (error) {
-    logger.error("listIndexedItemKeys failed; skipping retrieval for this run", error);
+    logger.error(
+      "listIndexedItemKeys failed; skipping retrieval for this run",
+      error,
+    );
     return retrievedByItem;
   }
 
@@ -285,11 +358,44 @@ async function retrieveContext(
   return retrievedByItem;
 }
 
-export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrchestrator {
+export function createWorkflowOrchestrator(
+  deps: OrchestratorDeps,
+): WorkflowOrchestrator {
   const listeners = new Set<(event: WorkflowEvent) => void>();
   let running = false;
   let controller: AbortController | null = null;
-  let last: { request: WorkflowRunRequest; result: WorkflowResult } | null = null;
+  let last: { request: WorkflowRunRequest; result: WorkflowResult } | null =
+    null;
+
+  /** JSON schema for auto-highlight structured outputs (OpenAI response_format).
+   * The model is constrained to return only valid JSON matching this shape —
+   * no prose before or after, and no extra properties. */
+  const HIGHLIGHT_RESPONSE_FORMAT: CompletionRequest["responseFormat"] = {
+    type: "json_schema",
+    json_schema: {
+      name: "highlight_passages",
+      strict: true,
+      schema: {
+        type: "object",
+        properties: {
+          passages: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                category: { type: "string" },
+                quote: { type: "string" },
+              },
+              required: ["category", "quote"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["passages"],
+        additionalProperties: false,
+      },
+    },
+  };
 
   const emit = (event: WorkflowEvent) => {
     for (const listener of listeners) {
@@ -303,22 +409,38 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
 
   const completeWithMeta = async (
     provider: AIProvider,
-    prompt: string,
+    systemPrompt: string,
+    userPrompt: string,
     signal: AbortSignal,
     maxTokens?: number,
+    responseFormat?: CompletionRequest["responseFormat"],
   ): Promise<CompletionResult> =>
     provider.complete({
-      messages: [{ role: "user", content: prompt }],
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
       signal,
       ...(maxTokens !== undefined ? { maxTokens } : {}),
+      ...(responseFormat !== undefined ? { responseFormat } : {}),
     });
 
   const complete = async (
     provider: AIProvider,
-    prompt: string,
+    systemPrompt: string,
+    userPrompt: string,
     signal: AbortSignal,
     maxTokens?: number,
-  ): Promise<string> => (await completeWithMeta(provider, prompt, signal, maxTokens)).text;
+  ): Promise<string> =>
+    (
+      await completeWithMeta(
+        provider,
+        systemPrompt,
+        userPrompt,
+        signal,
+        maxTokens,
+      )
+    ).text;
 
   /** Runs a per-item plan, pushing into `sections` as each item finishes so a
    * mid-run failure leaves completed sections inspectable (NFR-023) and any
@@ -340,7 +462,7 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         fraction: index / composed.items.length,
       });
       const ctx = byKey.get(item.ref.key);
-      const skipMessage = ctx ? plan.skip?.(ctx) ?? null : null;
+      const skipMessage = ctx ? (plan.skip?.(ctx) ?? null) : null;
       let markdown: string;
       let truncated = item.truncation !== undefined;
       if (skipMessage !== null) {
@@ -348,10 +470,17 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         markdown = skipMessage;
         truncated = false;
       } else {
-        markdown = await complete(provider, plan.buildPrompt(item, ctx as ItemContext), signal);
-        if (plan.transform && ctx) markdown = await plan.transform(ctx, markdown);
+        const { system, user } = plan.buildPrompt(item, ctx as ItemContext);
+        markdown = await complete(provider, system, user, signal);
+        if (plan.transform && ctx)
+          markdown = await plan.transform(ctx, markdown);
       }
-      const section: WorkflowResultSection = { ref: item.ref, title: item.title, markdown, truncated };
+      const section: WorkflowResultSection = {
+        ref: item.ref,
+        title: item.title,
+        markdown,
+        truncated,
+      };
       sections.push(section);
       emit({ type: "item-completed", section });
     }
@@ -368,6 +497,7 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
     emit({ type: "progress", message: "Querying model…" });
     const markdown = await complete(
       provider,
+      getFreePromptSystemPrompt(),
       composeFreePrompt(prompt, composed.combinedText),
       signal,
     );
@@ -407,13 +537,16 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
     // Verbatim-quote fidelity degrades on very large inputs, so each request
     // window is capped well below the context ceiling; the ceiling remains an
     // upper safety bound via the per-category budget below.
-    const windowChars = tokenBudgetToChars(Math.max(256, Math.floor(windowTokens)));
+    const windowChars = tokenBudgetToChars(
+      Math.max(256, Math.floor(windowTokens)),
+    );
     for (const [index, item] of composed.items.entries()) {
       signal.throwIfAborted();
       const targets = await highlightWriter.readTargets(item.ref);
       let markdown: string;
       if (targets.pages.length === 0) {
-        markdown = "This item has no readable PDF text, so nothing was highlighted.";
+        markdown =
+          "This item has no readable PDF text, so nothing was highlighted.";
       } else {
         const suggestions: HighlightSuggestion[] = [];
         const effectiveContext = effectiveHighlightContextTokens(
@@ -423,7 +556,9 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         let indexed = false;
         if (retrieval) {
           try {
-            indexed = (await retrieval.backend.listIndexedItemKeys()).includes(item.ref.key);
+            indexed = (await retrieval.backend.listIndexedItemKeys()).includes(
+              item.ref.key,
+            );
           } catch (error) {
             deps.logger.error(
               "listIndexedItemKeys failed; scanning highlights in document order",
@@ -436,7 +571,10 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
           ReturnType<typeof createHighlightTextWindows>
         >();
         for (const category of categories) {
-          const budget = calculateHighlightRequestBudget(effectiveContext, category);
+          const budget = calculateHighlightRequestBudget(
+            effectiveContext,
+            category,
+          );
           windowsByCategory.set(
             category,
             createHighlightTextWindows(
@@ -447,7 +585,10 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         }
         const totalPasses = Math.max(
           1,
-          [...windowsByCategory.values()].reduce((sum, windows) => sum + windows.length, 0),
+          [...windowsByCategory.values()].reduce(
+            (sum, windows) => sum + windows.length,
+            0,
+          ),
         );
         let completedPasses = 0;
 
@@ -461,9 +602,11 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
           try {
             result = await completeWithMeta(
               provider,
-              composeHighlightPrompt(text, [category]),
+              getHighlightSystemPrompt([category]),
+              composeHighlightPrompt(text),
               signal,
               completionTokens,
+              HIGHLIGHT_RESPONSE_FORMAT,
             );
           } catch (error) {
             const contextLimited =
@@ -472,14 +615,22 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
             if (!contextLimited) throw error;
             const split = splitHighlightWindow(text);
             if (!split) throw error;
-            for (const half of split) await scanWindow(half, category, completionTokens);
+            for (const half of split)
+              await scanWindow(half, category, completionTokens);
             return;
           }
           const parsed = parseHighlightSuggestions(result.text);
           suggestions.push(
-            ...parsed.map((suggestion) => ({ category, quote: suggestion.quote })),
+            ...parsed.map((suggestion) => ({
+              category,
+              quote: suggestion.quote,
+            })),
           );
-          if (parsed.length === 0 && result.text.trim() !== "" && !result.truncated) {
+          if (
+            parsed.length === 0 &&
+            result.text.trim() !== "" &&
+            !result.truncated
+          ) {
             deps.logger.error(
               `auto-highlight reply for category "${category}" parsed to 0 suggestions ` +
                 `(${result.text.length} chars)`,
@@ -492,13 +643,17 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
           if (result.truncated) {
             const split = splitHighlightWindow(text);
             if (split) {
-              for (const half of split) await scanWindow(half, category, completionTokens);
+              for (const half of split)
+                await scanWindow(half, category, completionTokens);
             }
           }
         };
 
         for (const category of categories) {
-          const budget = calculateHighlightRequestBudget(effectiveContext, category);
+          const budget = calculateHighlightRequestBudget(
+            effectiveContext,
+            category,
+          );
           let textWindows = windowsByCategory.get(category) ?? [];
           if (indexed && retrieval && textWindows.length > 1) {
             try {
@@ -523,9 +678,14 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
               message:
                 `Highlighting "${item.title || item.ref.key}": ${category}` +
                 `${textWindows.length > 1 ? ` (${chunkIndex + 1}/${textWindows.length})` : ""}…`,
-              fraction: (index + completedPasses / totalPasses) / composed.items.length,
+              fraction:
+                (index + completedPasses / totalPasses) / composed.items.length,
             });
-            await scanWindow(textWindow.text, category, budget.completionTokens);
+            await scanWindow(
+              textWindow.text,
+              category,
+              budget.completionTokens,
+            );
             completedPasses += 1;
           }
         }
@@ -533,7 +693,8 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
           (suggestion, position, all) =>
             all.findIndex(
               (candidate) =>
-                candidate.category.toLowerCase() === suggestion.category.toLowerCase() &&
+                candidate.category.toLowerCase() ===
+                  suggestion.category.toLowerCase() &&
                 candidate.quote === suggestion.quote,
             ) === position,
         );
@@ -554,12 +715,16 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
             all.findIndex(
               (candidate) =>
                 candidate.pageIndex === highlight.pageIndex &&
-                candidate.category.toLowerCase() === highlight.category.toLowerCase() &&
+                candidate.category.toLowerCase() ===
+                  highlight.category.toLowerCase() &&
                 candidate.text === highlight.text,
             ) === position,
         );
         signal.throwIfAborted();
-        const { created, failed } = await highlightWriter.createHighlights(item.ref, toWrite);
+        const { created, failed } = await highlightWriter.createHighlights(
+          item.ref,
+          toWrite,
+        );
         markdown = summarizeHighlightRun({ created, unresolved, failed });
       }
       const section: WorkflowResultSection = {
@@ -574,13 +739,21 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
     return sections;
   };
 
-  const execute = async (request: WorkflowRunRequest, signal: AbortSignal): Promise<void> => {
+  const execute = async (
+    request: WorkflowRunRequest,
+    signal: AbortSignal,
+  ): Promise<void> => {
     const workflowId = WORKFLOW_ID_BY_KIND[request.kind];
     if (request.items.length === 0) {
-      emit({ type: "failed", code: "invalid-config", message: "No items selected." });
+      emit({
+        type: "failed",
+        code: "invalid-config",
+        message: "No items selected.",
+      });
       return;
     }
-    const template = request.kind === "template" ? getTemplate(request.templateId) : undefined;
+    const template =
+      request.kind === "template" ? getTemplate(request.templateId) : undefined;
     if (request.kind === "template" && !template) {
       emit({
         type: "failed",
@@ -590,15 +763,27 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
       return;
     }
     if (request.kind === "free-prompt" && request.prompt.trim() === "") {
-      emit({ type: "failed", code: "invalid-config", message: "Enter a prompt first." });
+      emit({
+        type: "failed",
+        code: "invalid-config",
+        message: "Enter a prompt first.",
+      });
       return;
     }
     if (request.kind === "suggest-tags" && !deps.tagWriter) {
-      emit({ type: "failed", code: "invalid-config", message: "Tag writing is unavailable." });
+      emit({
+        type: "failed",
+        code: "invalid-config",
+        message: "Tag writing is unavailable.",
+      });
       return;
     }
     if (request.kind === "auto-highlight" && !deps.highlightWriter) {
-      emit({ type: "failed", code: "invalid-config", message: "Highlighting is unavailable." });
+      emit({
+        type: "failed",
+        code: "invalid-config",
+        message: "Highlighting is unavailable.",
+      });
       return;
     }
 
@@ -611,10 +796,16 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
       emit({ type: "progress", message: "Reading items…" });
       const contexts = await deps.reader.readItemContexts(request.items);
       if (contexts.length === 0) {
-        emit({ type: "failed", code: "invalid-config", message: "The selected items no longer exist." });
+        emit({
+          type: "failed",
+          code: "invalid-config",
+          message: "The selected items no longer exist.",
+        });
         return;
       }
-      const colorSemantics = parseColorSemantics(getStringPref(deps.prefs, PREF_KEYS.colorSemantics));
+      const colorSemantics = parseColorSemantics(
+        getStringPref(deps.prefs, PREF_KEYS.colorSemantics),
+      );
       const categories = configuredCategories(colorSemantics);
       const tokenBudgetPerItem = getIntPref(
         deps.prefs,
@@ -634,11 +825,13 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
       let providerContextWindowTokens: number | undefined;
       if (request.kind === "auto-highlight" && provider.getModelCapabilities) {
         try {
-          providerContextWindowTokens = (
-            await provider.getModelCapabilities()
-          )?.contextWindowTokens;
+          providerContextWindowTokens = (await provider.getModelCapabilities())
+            ?.contextWindowTokens;
         } catch (error) {
-          deps.logger.error("model context metadata unavailable; using the configured cap", error);
+          deps.logger.error(
+            "model context metadata unavailable; using the configured cap",
+            error,
+          );
         }
       }
       let retrievedByItem: Map<string, RetrievalResult[]> | undefined;
@@ -678,7 +871,12 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
 
       let sections: WorkflowResultSection[];
       if (request.kind === "free-prompt") {
-        sections = await runFreePrompt(provider, request.prompt, composed, signal);
+        sections = await runFreePrompt(
+          provider,
+          request.prompt,
+          composed,
+          signal,
+        );
       } else if (request.kind === "auto-highlight") {
         sections = await runAutoHighlight(
           provider,
@@ -691,7 +889,8 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
           autoHighlightContextWindowTokens,
           providerContextWindowTokens,
           autoHighlightWindowTokens,
-          deps.retrieval && getBoolPref(deps.prefs, PREF_KEYS.retrievalEnabled, true)
+          deps.retrieval &&
+            getBoolPref(deps.prefs, PREF_KEYS.retrievalEnabled, true)
             ? deps.retrieval
             : undefined,
           getIntPref(
@@ -711,11 +910,16 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         );
       }
 
-      const notice = request.kind === "auto-highlight" ? undefined : truncationNotice(composed);
+      const notice =
+        request.kind === "auto-highlight"
+          ? undefined
+          : truncationNotice(composed);
       const content =
         request.kind === "free-prompt"
           ? (sections[0]?.markdown ?? "")
-          : sections.map((s) => `## ${s.title || s.ref.key}\n\n${s.markdown}`).join("\n\n");
+          : sections
+              .map((s) => `## ${s.title || s.ref.key}\n\n${s.markdown}`)
+              .join("\n\n");
       const result: WorkflowResult = {
         workflowId,
         content,
@@ -729,7 +933,8 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
         emit({ type: "cancelled" });
         return;
       }
-      const code: ErrorCode = error instanceof AgentError ? error.code : "unknown";
+      const code: ErrorCode =
+        error instanceof AgentError ? error.code : "unknown";
       deps.logger.error(`workflow ${workflowId} failed (${code})`, error);
       // Earlier per-item sections stay inspectable, but nothing was written
       // to Zotero (NFR-023).
@@ -746,10 +951,15 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
   return {
     async run(request: WorkflowRunRequest): Promise<void> {
       if (running) {
-        throw new AgentError("invalid-config", "A workflow is already running.");
+        throw new AgentError(
+          "invalid-config",
+          "A workflow is already running.",
+        );
       }
       running = true;
-      controller = (deps.createAbortController ?? (() => new AbortController()))();
+      controller = (
+        deps.createAbortController ?? (() => new AbortController())
+      )();
       try {
         await execute(request, controller.signal);
       } finally {
@@ -781,11 +991,17 @@ export function createWorkflowOrchestrator(deps: OrchestratorDeps): WorkflowOrch
       for (const section of last.result.sections) {
         try {
           const html = markdownToHtml(section.markdown);
-          const { noteKey } = await deps.noteWriter.createChildNote(section.ref, html);
+          const { noteKey } = await deps.noteWriter.createChildNote(
+            section.ref,
+            html,
+          );
           outcome.saved.push({ itemKey: section.ref.key, noteKey });
         } catch (error) {
           deps.logger.error(`saving note for ${section.ref.key} failed`, error);
-          outcome.failed.push({ itemKey: section.ref.key, message: toUserMessage(error) });
+          outcome.failed.push({
+            itemKey: section.ref.key,
+            message: toUserMessage(error),
+          });
         }
       }
       return outcome;

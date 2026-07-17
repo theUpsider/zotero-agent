@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CATEGORIES } from "../src/core/colorSemantics";
-import { PROMPT_TEMPLATES, getTemplate, renderTemplate } from "../src/prompts/templates";
+import {
+  PROMPT_TEMPLATES,
+  getTemplate,
+  renderTemplate,
+} from "../src/prompts/templates";
 
 describe("PROMPT_TEMPLATES", () => {
   it("provides one template per default scholarly category (FR-082..FR-088)", () => {
@@ -15,6 +19,20 @@ describe("PROMPT_TEMPLATES", () => {
     expect(new Set(ids).size).toBe(ids.length);
     for (const template of PROMPT_TEMPLATES) {
       expect(template.template).toContain("{{context}}");
+    }
+  });
+
+  it("has a non-empty systemPrompt on every template", () => {
+    for (const template of PROMPT_TEMPLATES) {
+      expect(template.systemPrompt).toBeTruthy();
+      expect(template.systemPrompt.length).toBeGreaterThan(50);
+    }
+  });
+
+  it("keeps template bodies concise (instructions moved to system prompt)", () => {
+    for (const template of PROMPT_TEMPLATES) {
+      // Template should be a short instruction + placeholder, not a paragraph.
+      expect(template.template.length).toBeLessThan(150);
     }
   });
 });

@@ -27,6 +27,17 @@ export interface CompletionRequest {
   maxTokens?: number;
   temperature?: number;
   signal?: AbortSignal;
+  /** OpenAI structured outputs (https://platform.openai.com/docs/guides/structured-outputs).
+   * When set, the provider sends `response_format` in the request body so the
+   * model is constrained to produce valid JSON matching the schema. */
+  responseFormat?: {
+    type: "json_schema";
+    json_schema: {
+      name: string;
+      strict: boolean;
+      schema: Record<string, unknown>;
+    };
+  };
 }
 
 export interface CompletionResult {
@@ -59,7 +70,10 @@ export interface AIProvider {
   /** Live check: configured, endpoint reachable, auth accepted, model known
    * (FR-020). Never throws — failures come back as typed errors. */
   validateConfig(): Promise<ValidationResult>;
-  complete(request: CompletionRequest, onChunk?: ChunkHandler): Promise<CompletionResult>;
+  complete(
+    request: CompletionRequest,
+    onChunk?: ChunkHandler,
+  ): Promise<CompletionResult>;
   listModels?(): Promise<string[]>;
   /** Capabilities for the currently configured model. Optional so existing
    * providers and listModels() implementations remain source-compatible. */

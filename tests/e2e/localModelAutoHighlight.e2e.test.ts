@@ -5,8 +5,14 @@ import { describe, expect, it } from "vitest";
 import { noopLogger } from "../../src/core/errors";
 import { defaultColorSemantics } from "../../src/core/colorSemantics";
 import { OpenAICompatibleProvider } from "../../src/providers/openaiCompatible";
-import { composeHighlightPrompt } from "../../src/prompts/scholarly";
-import { parseHighlightSuggestions, planHighlights } from "../../src/workflows/highlights";
+import {
+  composeHighlightPrompt,
+  getHighlightSystemPrompt,
+} from "../../src/prompts/scholarly";
+import {
+  parseHighlightSuggestions,
+  planHighlights,
+} from "../../src/workflows/highlights";
 import {
   HIGHLIGHT_COMPLETION_TOKENS,
   splitHighlightWindow,
@@ -15,8 +21,10 @@ import type { PdfPageText } from "../../src/zotero/types";
 import type { AIProvider } from "../../src/providers/types";
 import type { HighlightSuggestion } from "../../src/workflows/highlights";
 
-const ENDPOINT = process.env.ZOTERO_AGENT_E2E_ENDPOINT ?? "http://127.0.0.1:1234/v1";
-const MODEL = process.env.ZOTERO_AGENT_E2E_MODEL ?? "nvidia/nemotron-3-nano-omni";
+const ENDPOINT =
+  process.env.ZOTERO_AGENT_E2E_ENDPOINT ?? "http://127.0.0.1:1234/v1";
+const MODEL =
+  process.env.ZOTERO_AGENT_E2E_MODEL ?? "nvidia/nemotron-3-nano-omni";
 const FIXTURE_DIR = resolve("test-pdfs");
 // Keep the E2E below the runtime's normal per-request window. Nemotron is a
 // reasoning model, so a large prompt can spend a 4k completion entirely on
@@ -49,9 +57,13 @@ function representativePage(pages: PdfPageText[]): PdfPageText {
   const candidates = pages.filter(
     (page) =>
       page.text.length >= 1_500 &&
-      /\b(method|result|study|review|analysis|propos(?:e|ed))\b/i.test(page.text),
+      /\b(method|result|study|review|analysis|propos(?:e|ed))\b/i.test(
+        page.text,
+      ),
   );
-  return (candidates[0] ?? pages.find((page) => page.text.length >= 1_500) ?? pages[0]) as PdfPageText;
+  return (candidates[0] ??
+    pages.find((page) => page.text.length >= 1_500) ??
+    pages[0]) as PdfPageText;
 }
 
 async function suggestWithTruncationRecovery(
@@ -59,18 +71,17 @@ async function suggestWithTruncationRecovery(
   text: string,
   depth = 0,
 ): Promise<HighlightSuggestion[]> {
+  const categories = [
+    "methodology",
+    "results",
+    "literature",
+    "limitations",
+    "data",
+  ];
   const result = await provider.complete({
     messages: [
-      {
-        role: "user",
-        content: composeHighlightPrompt(text, [
-          "methodology",
-          "results",
-          "literature",
-          "limitations",
-          "data",
-        ]),
-      },
+      { role: "system", content: getHighlightSystemPrompt(categories) },
+      { role: "user", content: composeHighlightPrompt(text) },
     ],
     maxTokens: HIGHLIGHT_COMPLETION_TOKENS,
     temperature: 0,
@@ -81,7 +92,9 @@ async function suggestWithTruncationRecovery(
   if (!halves) return parsed;
   const recovered: HighlightSuggestion[] = [];
   for (const half of halves) {
-    recovered.push(...(await suggestWithTruncationRecovery(provider, half, depth + 1)));
+    recovered.push(
+      ...(await suggestWithTruncationRecovery(provider, half, depth + 1)),
+    );
   }
   return [...parsed, ...recovered];
 }
@@ -103,7 +116,10 @@ describe.skipIf(process.env.ZOTERO_AGENT_E2E !== "1")(
         async () => {
           const pages = extractPages(resolve(FIXTURE_DIR, pdf));
           const page = representativePage(pages);
-          const requestPage = { ...page, text: page.text.slice(0, REQUEST_CHARS) };
+          const requestPage = {
+            ...page,
+            text: page.text.slice(0, REQUEST_CHARS),
+          };
           const provider = new OpenAICompatibleProvider(
             {
               id: "openai-compatible",
@@ -125,7 +141,11 @@ describe.skipIf(process.env.ZOTERO_AGENT_E2E !== "1")(
             [],
           );
 
-          const diagnostic = JSON.stringify({ suggestions, unresolved: plan.unresolved }, null, 2);
+          const diagnostic = JSON.stringify(
+            { suggestions, unresolved: plan.unresolved },
+            null,
+            2,
+          );
           expect(suggestions.length, diagnostic).toBeGreaterThan(0);
           expect(plan.planned.length, diagnostic).toBeGreaterThan(0);
           expect(

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { defaultColorSemantics } from "../src/core/colorSemantics";
 import {
   composeFreePrompt,
+  getFreePromptSystemPrompt,
   composeItemContexts,
   composeTemplatePrompt,
   truncateAtBoundary,
@@ -14,7 +15,11 @@ const MAPPING = defaultColorSemantics();
 
 describe("composeItemContexts", () => {
   it("includes metadata header, tags, and delimiter", () => {
-    const { combinedText } = composeItemContexts([itemContext()], MAPPING, OPTIONS);
+    const { combinedText } = composeItemContexts(
+      [itemContext()],
+      MAPPING,
+      OPTIONS,
+    );
     expect(combinedText).toContain("=== Item: A Study of Things (KEY1) ===");
     expect(combinedText).toContain("Authors: Ada Lovelace, Alan Turing");
     expect(combinedText).toContain("Year: 2021");
@@ -100,7 +105,10 @@ describe("composeItemContexts", () => {
   });
 
   it("does not truncate PDF text within budget", () => {
-    const item = itemContext({ pdfText: "short text", pdfTextSource: "pdf-worker" });
+    const item = itemContext({
+      pdfText: "short text",
+      pdfTextSource: "pdf-worker",
+    });
     const result = composeItemContexts([item], MAPPING, OPTIONS);
     expect(result.truncations).toHaveLength(0);
     expect(result.combinedText).toContain("Full text:\nshort text");
@@ -108,7 +116,12 @@ describe("composeItemContexts", () => {
   });
 
   it("handles items with no annotations, notes, tags, or PDF cleanly", () => {
-    const item = itemContext({ tags: [], notes: [], annotations: [], pdfText: "" });
+    const item = itemContext({
+      tags: [],
+      notes: [],
+      annotations: [],
+      pdfText: "",
+    });
     const { combinedText } = composeItemContexts([item], MAPPING, OPTIONS);
     expect(combinedText).toContain("=== Item:");
     expect(combinedText).not.toContain("Annotations");
@@ -119,7 +132,10 @@ describe("composeItemContexts", () => {
 });
 
 describe("composeItemContexts — retrieval-augmented context (S3-05)", () => {
-  const RETRIEVAL_OPTIONS = { pdfTextCharBudgetPerItem: 20000, tokenBudgetPerItem: 5 };
+  const RETRIEVAL_OPTIONS = {
+    pdfTextCharBudgetPerItem: 20000,
+    tokenBudgetPerItem: 5,
+  };
 
   it("uses retrieved passages instead of truncating when the item is indexed", () => {
     const pdfText = "word ".repeat(2000);
@@ -129,16 +145,27 @@ describe("composeItemContexts — retrieval-augmented context (S3-05)", () => {
         "KEY1",
         [
           {
-            chunk: { itemKey: "KEY1", source: "pdf-text" as const, text: "the key finding", chunkId: "KEY1:pdf-text:0", page: "4" },
+            chunk: {
+              itemKey: "KEY1",
+              source: "pdf-text" as const,
+              text: "the key finding",
+              chunkId: "KEY1:pdf-text:0",
+              page: "4",
+            },
             score: 0.9,
           },
         ],
       ],
     ]);
-    const result = composeItemContexts([item], MAPPING, { ...RETRIEVAL_OPTIONS, retrievedByItem });
+    const result = composeItemContexts([item], MAPPING, {
+      ...RETRIEVAL_OPTIONS,
+      retrievedByItem,
+    });
     expect(result.truncations).toHaveLength(0);
     expect(result.items[0]!.contextSource).toBe("retrieval");
-    expect(result.combinedText).toContain("Relevant passages (retrieved for this question):");
+    expect(result.combinedText).toContain(
+      "Relevant passages (retrieved for this question):",
+    );
     expect(result.combinedText).toContain('[p. 4] "the key finding"');
     expect(result.combinedText).not.toContain("truncated");
   });
@@ -146,14 +173,23 @@ describe("composeItemContexts — retrieval-augmented context (S3-05)", () => {
   it("falls back to char-budget truncation with a notice when the item isn't indexed", () => {
     const pdfText = "word ".repeat(2000);
     const item = itemContext({ pdfText, pdfTextSource: "pdf-worker" });
-    const result = composeItemContexts([item], MAPPING, { pdfTextCharBudgetPerItem: 100, tokenBudgetPerItem: 5 });
+    const result = composeItemContexts([item], MAPPING, {
+      pdfTextCharBudgetPerItem: 100,
+      tokenBudgetPerItem: 5,
+    });
     expect(result.truncations).toHaveLength(1);
     expect(result.items[0]!.contextSource).toBe("truncated-full-text");
   });
 
   it("sends the full text (no retrieval, no truncation) when it already fits the token budget", () => {
-    const item = itemContext({ pdfText: "short text", pdfTextSource: "pdf-worker" });
-    const result = composeItemContexts([item], MAPPING, { pdfTextCharBudgetPerItem: 20000, tokenBudgetPerItem: 5000 });
+    const item = itemContext({
+      pdfText: "short text",
+      pdfTextSource: "pdf-worker",
+    });
+    const result = composeItemContexts([item], MAPPING, {
+      pdfTextCharBudgetPerItem: 20000,
+      tokenBudgetPerItem: 5000,
+    });
     expect(result.items[0]!.contextSource).toBe("full-text");
     expect(result.truncations).toHaveLength(0);
   });
@@ -167,7 +203,11 @@ describe("composeItemContexts — retrieval-augmented context (S3-05)", () => {
 
 describe("composeTemplatePrompt", () => {
   it("renders every predefined template with real context", () => {
-    const { combinedText } = composeItemContexts([itemContext()], MAPPING, OPTIONS);
+    const { combinedText } = composeItemContexts(
+      [itemContext()],
+      MAPPING,
+      OPTIONS,
+    );
     for (const template of PROMPT_TEMPLATES) {
       const prompt = composeTemplatePrompt(template, combinedText);
       expect(prompt).toContain("=== Item: A Study of Things (KEY1) ===");
@@ -177,10 +217,21 @@ describe("composeTemplatePrompt", () => {
 });
 
 describe("composeFreePrompt", () => {
-  it("puts the user prompt before the composed context", () => {
+  it("puts the user prompt before the composed context without preamble", () => {
     const prompt = composeFreePrompt("  What is the method?  ", "CONTEXT");
     expect(prompt.startsWith("What is the method?")).toBe(true);
     expect(prompt).toContain("CONTEXT");
+    // The preamble ("Answer based on the following paper content") is now in
+    // the system prompt, not the user message.
+    expect(prompt).not.toContain("Answer based on");
+  });
+});
+
+describe("getFreePromptSystemPrompt", () => {
+  it("returns a non-empty generic scholarly assistant role", () => {
+    const prompt = getFreePromptSystemPrompt();
+    expect(prompt).toContain("research assistant");
+    expect(prompt.length).toBeGreaterThan(100);
   });
 });
 

@@ -41,7 +41,11 @@ export interface TruncationNote {
 }
 
 /** How an item's PDF-text section was produced (S3-05). */
-export type ContextSource = "retrieval" | "full-text" | "truncated-full-text" | "no-pdf";
+export type ContextSource =
+  | "retrieval"
+  | "full-text"
+  | "truncated-full-text"
+  | "no-pdf";
 
 export interface ComposedItemContext {
   ref: ItemRef;
@@ -66,11 +70,17 @@ function groupAnnotationsByCategory(
 ): Map<string, AnnotationInfo[]> {
   const groups = new Map<string, AnnotationInfo[]>();
   for (const annotation of annotations) {
-    const categories = annotation.color ? categoriesForColor(mapping, annotation.color) : [];
+    const categories = annotation.color
+      ? categoriesForColor(mapping, annotation.color)
+      : [];
     const labels =
       categories.length > 0
         ? categories
-        : [annotation.color ? `${UNCATEGORIZED} (${annotation.color})` : UNCATEGORIZED];
+        : [
+            annotation.color
+              ? `${UNCATEGORIZED} (${annotation.color})`
+              : UNCATEGORIZED,
+          ];
     for (const label of labels) {
       const group = groups.get(label) ?? [];
       group.push(annotation);
@@ -83,7 +93,8 @@ function groupAnnotationsByCategory(
 function formatAnnotation(annotation: AnnotationInfo): string {
   const page = annotation.pageLabel ? ` (p. ${annotation.pageLabel})` : "";
   const comment = annotation.comment ? ` — Comment: ${annotation.comment}` : "";
-  const text = annotation.text || `[${annotation.type || "annotation"} without text]`;
+  const text =
+    annotation.text || `[${annotation.type || "annotation"} without text]`;
   return `- "${text}"${page}${comment}`;
 }
 
@@ -133,16 +144,22 @@ function composeItem(
   let truncation: TruncationNote | undefined;
   let contextSource: ContextSource = "no-pdf";
   if (item.pdfText) {
-    const overCharBudget = item.pdfText.length > options.pdfTextCharBudgetPerItem;
+    const overCharBudget =
+      item.pdfText.length > options.pdfTextCharBudgetPerItem;
     const overTokenBudget =
-      options.tokenBudgetPerItem !== undefined && approxTokens(item.pdfText) > options.tokenBudgetPerItem;
+      options.tokenBudgetPerItem !== undefined &&
+      approxTokens(item.pdfText) > options.tokenBudgetPerItem;
 
     if (!overCharBudget && !overTokenBudget) {
       lines.push("", "Full text:", item.pdfText);
       contextSource = "full-text";
     } else {
       const passages = options.retrievedByItem?.get(m.key);
-      if (options.tokenBudgetPerItem !== undefined && passages && passages.length > 0) {
+      if (
+        options.tokenBudgetPerItem !== undefined &&
+        passages &&
+        passages.length > 0
+      ) {
         lines.push("", "Relevant passages (retrieved for this question):");
         const budgetChars = tokenBudgetToChars(options.tokenBudgetPerItem);
         let used = 0;
@@ -157,7 +174,10 @@ function composeItem(
       } else {
         let pdfText = item.pdfText;
         if (overCharBudget) {
-          pdfText = truncateAtBoundary(pdfText, options.pdfTextCharBudgetPerItem);
+          pdfText = truncateAtBoundary(
+            pdfText,
+            options.pdfTextCharBudgetPerItem,
+          );
           truncation = {
             itemKey: m.key,
             includedChars: pdfText.length,
@@ -190,22 +210,42 @@ export function composeItemContexts(
   colorSemantics: ColorSemantics,
   options: ComposeOptions,
 ): ComposedContext {
-  const composed = items.map((item) => composeItem(item, colorSemantics, options));
+  const composed = items.map((item) =>
+    composeItem(item, colorSemantics, options),
+  );
   return {
     items: composed,
     combinedText: composed.map((item) => item.contextText).join("\n\n"),
-    truncations: composed.flatMap((item) => (item.truncation ? [item.truncation] : [])),
+    truncations: composed.flatMap((item) =>
+      item.truncation ? [item.truncation] : [],
+    ),
   };
 }
 
-export function composeTemplatePrompt(template: PromptTemplate, contextText: string): string {
+export function composeTemplatePrompt(
+  template: PromptTemplate,
+  contextText: string,
+): string {
   return renderTemplate(template, contextText);
 }
 
-/** Free-form prompt over the composed context (FR-081, FR-089). */
-export function composeFreePrompt(userPrompt: string, contextText: string): string {
+/** One-line role shared across all free-prompt runs. No task-specific
+ * instructions — the user writes those in their own prompt. */
+export function getFreePromptSystemPrompt(): string {
   return (
-    `${userPrompt.trim()}\n\n` +
-    `Answer based on the following paper content:\n\n${contextText}`
+    "You are a scholarly research assistant. Answer questions based on the provided paper " +
+    "content. Write in well-structured Markdown with level-2 headings where appropriate. " +
+    "Use only the provided content — do not invent information or cite sources not present " +
+    "in the papers. If the provided content does not contain the answer, say so clearly."
   );
+}
+
+/** Free-form prompt over the composed context (FR-081, FR-089).
+ * The preamble is now in the system prompt — user message is just the user's
+ * question + paper content. */
+export function composeFreePrompt(
+  userPrompt: string,
+  contextText: string,
+): string {
+  return `${userPrompt.trim()}\n\n${contextText}`;
 }

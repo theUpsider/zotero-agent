@@ -5,7 +5,10 @@
 
 import { InvalidConfigError } from "../core/errors";
 import { approxTokens, tokenBudgetToChars } from "../core/tokens";
-import { composeHighlightPrompt } from "../prompts/scholarly";
+import {
+  composeHighlightPrompt,
+  getHighlightSystemPrompt,
+} from "../prompts/scholarly";
 import type { RetrievalResult } from "../retrieval/types";
 import type { PdfPageText } from "../zotero/types";
 
@@ -53,15 +56,17 @@ export function effectiveHighlightContextTokens(
 }
 
 /** Subtract every non-PDF part of a highlight request. Prompt overhead is
- * measured from the exact category-specific prompt string; the remaining
- * token arithmetic is conservative because text tokens use the shared chars/4
- * estimator plus a ten-percent safety margin. */
+ * measured from the system prompt (role + instructions) plus the user prompt
+ * framing ("Paper content:\n"), plus the chat envelope tokens. The remaining
+ * token arithmetic is conservative — a ten-percent safety margin is applied. */
 export function calculateHighlightRequestBudget(
   contextWindowTokens: number,
   category: string,
 ): HighlightRequestBudget {
   const promptOverheadTokens =
-    approxTokens(composeHighlightPrompt("", [category])) + CHAT_ENVELOPE_TOKENS;
+    approxTokens(getHighlightSystemPrompt([category])) +
+    approxTokens(composeHighlightPrompt("")) +
+    CHAT_ENVELOPE_TOKENS;
   const safetyTokens = Math.ceil(contextWindowTokens * HIGHLIGHT_SAFETY_RATIO);
   const completionTokens = Math.min(
     HIGHLIGHT_COMPLETION_TOKENS,
@@ -91,7 +96,10 @@ export function calculateHighlightRequestBudget(
 
 export function serializeHighlightPages(pages: PdfPageText[]): string {
   return pages
-    .map((page) => `[PDF page ${page.pageLabel || page.pageIndex + 1}]\n${page.text}`)
+    .map(
+      (page) =>
+        `[PDF page ${page.pageLabel || page.pageIndex + 1}]\n${page.text}`,
+    )
     .join("\n\n");
 }
 
@@ -101,7 +109,11 @@ const HIGHLIGHT_WINDOW_CUT_SLACK = 0.15;
 /** End a window at a paragraph, line, or word boundary near the ideal cut so
  * the model never sees a mid-word splice. Falls back to the ideal cut when no
  * whitespace exists in the slack zone. */
-function boundaryCut(document: string, idealEnd: number, floor: number): number {
+function boundaryCut(
+  document: string,
+  idealEnd: number,
+  floor: number,
+): number {
   if (idealEnd >= document.length) return document.length;
   const zone = document.slice(floor, idealEnd);
   const paragraph = zone.lastIndexOf("\n\n");
@@ -140,9 +152,14 @@ export function createHighlightTextWindows(
 ): HighlightTextWindow[] {
   const document = serializeHighlightPages(pages);
   if (document === "") return [];
-  const size = Math.max(HIGHLIGHT_WINDOW_OVERLAP_CHARS + 1, Math.floor(maxPayloadChars));
+  const size = Math.max(
+    HIGHLIGHT_WINDOW_OVERLAP_CHARS + 1,
+    Math.floor(maxPayloadChars),
+  );
   if (document.length <= size) {
-    return [{ text: document, start: 0, end: document.length, documentOrder: 0 }];
+    return [
+      { text: document, start: 0, end: document.length, documentOrder: 0 },
+    ];
   }
   const windows: HighlightTextWindow[] = [];
   let start = 0;
@@ -179,8 +196,12 @@ function normalizedWords(text: string): Set<string> {
 
 function passageScore(windowText: string, passageText: string): number {
   const windowNormalized = windowText.toLowerCase().replace(/\s+/g, " ");
-  const passageNormalized = passageText.toLowerCase().replace(/\s+/g, " ").trim();
-  if (passageNormalized !== "" && windowNormalized.includes(passageNormalized)) return 1;
+  const passageNormalized = passageText
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+  if (passageNormalized !== "" && windowNormalized.includes(passageNormalized))
+    return 1;
   const passageWords = normalizedWords(passageText);
   if (passageWords.size === 0) return 0;
   const windowWords = normalizedWords(windowText);
@@ -195,19 +216,23 @@ export function rankHighlightWindows(
   windows: HighlightTextWindow[],
   results: RetrievalResult[],
 ): HighlightTextWindow[] {
-  const passages = results.filter((result) => result.chunk.source === "pdf-text");
+  const passages = results.filter(
+    (result) => result.chunk.source === "pdf-text",
+  );
   if (passages.length === 0) return [...windows];
   return windows
     .map((window) => ({
       window,
       score: passages.reduce(
-        (sum, result) => sum + result.score * passageScore(window.text, result.chunk.text),
+        (sum, result) =>
+          sum + result.score * passageScore(window.text, result.chunk.text),
         0,
       ),
     }))
     .sort(
       (left, right) =>
-        right.score - left.score || left.window.documentOrder - right.window.documentOrder,
+        right.score - left.score ||
+        left.window.documentOrder - right.window.documentOrder,
     )
     .map(({ window }) => window);
 }

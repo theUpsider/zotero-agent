@@ -5,63 +5,110 @@ import {
   composeNoteFromAnnotationsPrompt,
   composeSummarizeNotesPrompt,
   composeTagSuggestionPrompt,
+  getAnalysisSystemPrompt,
+  getHighlightSystemPrompt,
+  getNoteFromAnnotationsSystemPrompt,
+  getSummarizeNotesSystemPrompt,
+  getTagSuggestionSystemPrompt,
   NO_EVIDENCE,
   parseTagSuggestions,
 } from "../src/prompts/scholarly";
 
-describe("composeHighlightPrompt (S5-01)", () => {
-  it("lists the configured categories and demands verbatim JSON output", () => {
-    const prompt = composeHighlightPrompt("CONTEXT", ["methodology", "results"]);
+describe("getHighlightSystemPrompt", () => {
+  it("lists the categories and describes verbatim quoting rules", () => {
+    const prompt = getHighlightSystemPrompt(["methodology", "results"]);
     expect(prompt).toContain("- methodology");
     expect(prompt).toContain("- results");
-    expect(prompt).toContain("VERBATIM");
-    expect(prompt).toContain("JSON array");
-    expect(prompt).toContain('"quote"');
+    expect(prompt).toContain("verbatim");
     expect(prompt).toContain("most relevant");
-    expect(prompt).toContain("CONTEXT");
+    expect(prompt).toContain("5–40 words");
   });
 });
 
-describe("composeAnalysisPrompt (S4-01/S4-02)", () => {
-  it("lists the configured categories as headings and demands the no-evidence marker", () => {
-    const prompt = composeAnalysisPrompt("CONTEXT", ["methodology", "results", "ethics"]);
-    expect(prompt).toContain("- methodology");
-    expect(prompt).toContain("- ethics"); // custom category, not a hardcoded default (FR-038)
-    expect(prompt).toContain(NO_EVIDENCE);
-    expect(prompt).toContain('"## <category>"');
+describe("composeHighlightPrompt (S5-01)", () => {
+  it("wraps the paper content without inline JSON format instructions", () => {
+    const prompt = composeHighlightPrompt("CONTEXT");
+    expect(prompt).toContain("Paper content:");
     expect(prompt).toContain("CONTEXT");
+    expect(prompt).not.toContain("VERBATIM");
+    expect(prompt).not.toContain("JSON array");
+  });
+});
+
+describe("getAnalysisSystemPrompt", () => {
+  it("lists headings and the no-evidence marker (FR-040)", () => {
+    const prompt = getAnalysisSystemPrompt([
+      "methodology",
+      "results",
+      "ethics",
+    ]);
+    expect(prompt).toContain('"## methodology"');
+    expect(prompt).toContain('"## ethics"');
+    expect(prompt).toContain(NO_EVIDENCE);
     expect(prompt).toContain("Do not invent");
   });
 });
 
-describe("composeNoteFromAnnotationsPrompt (S4-03)", () => {
+describe("composeAnalysisPrompt (S4-01/S4-02)", () => {
+  it("wraps the paper content concisely", () => {
+    const prompt = composeAnalysisPrompt("CONTEXT", ["methodology"]);
+    expect(prompt).toContain("Analyze this paper");
+    expect(prompt).toContain("CONTEXT");
+    expect(prompt).not.toContain("Do not invent");
+  });
+});
+
+describe("getNoteFromAnnotationsSystemPrompt", () => {
   it("groups by color category and routes unmapped colors to Other (FR-053)", () => {
-    const prompt = composeNoteFromAnnotationsPrompt("CTX");
+    const prompt = getNoteFromAnnotationsSystemPrompt();
     expect(prompt).toContain("Other");
     expect(prompt).toContain("Uncategorized");
-    expect(prompt).toContain("page reference");
+  });
+});
+
+describe("composeNoteFromAnnotationsPrompt (S4-03)", () => {
+  it("wraps the paper content concisely", () => {
+    const prompt = composeNoteFromAnnotationsPrompt("CTX");
+    expect(prompt).toContain("annotations and highlights");
     expect(prompt).toContain("CTX");
+  });
+});
+
+describe("getSummarizeNotesSystemPrompt", () => {
+  it("tells the model to use existing notes, not re-analyze", () => {
+    const prompt = getSummarizeNotesSystemPrompt();
+    expect(prompt).toContain("existing notes and annotations");
+    expect(prompt).toContain("Do not re-analyze");
   });
 });
 
 describe("composeSummarizeNotesPrompt (S4-04)", () => {
-  it("summarizes existing notes/annotations rather than the full paper", () => {
+  it("wraps the content concisely", () => {
     const prompt = composeSummarizeNotesPrompt("CTX");
-    expect(prompt).toContain("existing notes and annotations");
-    expect(prompt).toContain("do not re-analyze the full paper");
+    expect(prompt).toContain("coherent overview");
     expect(prompt).toContain("CTX");
   });
 });
 
-describe("composeTagSuggestionPrompt (S4-05)", () => {
-  it("feeds existing tags in as do-not-repeat context (FR-057)", () => {
-    const prompt = composeTagSuggestionPrompt("CTX", ["ml", "nlp"]);
-    expect(prompt).toContain("do not repeat these): ml, nlp");
+describe("getTagSuggestionSystemPrompt", () => {
+  it("lists existing tags as do-not-repeat context (FR-057)", () => {
+    const prompt = getTagSuggestionSystemPrompt(["ml", "nlp"]);
+    expect(prompt).toContain("do not repeat these");
+    expect(prompt).toContain("ml, nlp");
     expect(prompt).toContain("comma-separated");
   });
 
   it("marks empty existing tags as (none)", () => {
-    expect(composeTagSuggestionPrompt("CTX", [])).toContain("(none)");
+    expect(getTagSuggestionSystemPrompt([])).toContain("(none)");
+  });
+});
+
+describe("composeTagSuggestionPrompt (S4-05)", () => {
+  it("wraps the paper content concisely", () => {
+    const prompt = composeTagSuggestionPrompt("CTX");
+    expect(prompt).toContain("Suggest");
+    expect(prompt).toContain("CTX");
+    expect(prompt).not.toContain("do not repeat");
   });
 });
 
@@ -76,7 +123,11 @@ describe("parseTagSuggestions (S4-05)", () => {
 
   it("parses a bulleted / numbered list and strips a Tags: label", () => {
     const text = "Tags:\n- deep learning\n2) attention\n* rag";
-    expect(parseTagSuggestions(text)).toEqual(["deep learning", "attention", "rag"]);
+    expect(parseTagSuggestions(text)).toEqual([
+      "deep learning",
+      "attention",
+      "rag",
+    ]);
   });
 
   it("strips wrapping quotes and trailing periods, de-dupes case-insensitively", () => {
@@ -84,7 +135,10 @@ describe("parseTagSuggestions (S4-05)", () => {
   });
 
   it("keeps keywords that merely begin with a digit", () => {
-    expect(parseTagSuggestions("3d printing, 5g")).toEqual(["3d printing", "5g"]);
+    expect(parseTagSuggestions("3d printing, 5g")).toEqual([
+      "3d printing",
+      "5g",
+    ]);
   });
 
   it("drops empties and improbably long entries", () => {

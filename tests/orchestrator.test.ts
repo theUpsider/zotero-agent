@@ -6,8 +6,16 @@ import {
   noopLogger,
   ProviderResponseError,
 } from "../src/core/errors";
-import type { AIProvider, CompletionRequest, CompletionResult } from "../src/providers/types";
-import type { RetrievalBackend, RetrievalQuery, RetrievalResult } from "../src/retrieval/types";
+import type {
+  AIProvider,
+  CompletionRequest,
+  CompletionResult,
+} from "../src/providers/types";
+import type {
+  RetrievalBackend,
+  RetrievalQuery,
+  RetrievalResult,
+} from "../src/retrieval/types";
 import {
   createWorkflowOrchestrator,
   listTemplateWorkflows,
@@ -37,7 +45,9 @@ function fakePrefs(values: Record<string, unknown> = {}): PrefStore {
 }
 
 function fakeProvider(
-  complete: (request: CompletionRequest) => Promise<CompletionResult> = async () => ({
+  complete: (
+    request: CompletionRequest,
+  ) => Promise<CompletionResult> = async () => ({
     text: "generated **answer**",
   }),
 ): AIProvider {
@@ -53,7 +63,9 @@ function fakeReader(contexts: ItemContext[]): ItemContextReader {
   return { readItemContexts: vi.fn(async () => contexts) };
 }
 
-function fakeNoteWriter(): NoteWriter & { createChildNote: ReturnType<typeof vi.fn> } {
+function fakeNoteWriter(): NoteWriter & {
+  createChildNote: ReturnType<typeof vi.fn>;
+} {
   let counter = 0;
   return {
     createChildNote: vi.fn(async () => ({ noteKey: `NOTE${++counter}` })),
@@ -74,8 +86,14 @@ const refs: ItemRef[] = [
 ];
 
 const twoItems = [
-  itemContext({ ref: { libraryID: 1, key: "AAA" }, metadata: metadata({ key: "AAA", title: "Paper A" }) }),
-  itemContext({ ref: { libraryID: 1, key: "BBB" }, metadata: metadata({ key: "BBB", title: "Paper B" }) }),
+  itemContext({
+    ref: { libraryID: 1, key: "AAA" },
+    metadata: metadata({ key: "AAA", title: "Paper A" }),
+  }),
+  itemContext({
+    ref: { libraryID: 1, key: "BBB" },
+    metadata: metadata({ key: "BBB", title: "Paper B" }),
+  }),
 ];
 
 function fakeBackend(
@@ -88,7 +106,11 @@ function fakeBackend(
     query: vi.fn(query),
     rebuild: vi.fn(async () => undefined),
     listIndexedItemKeys: vi.fn(async () => indexedKeys),
-    stats: vi.fn(async () => ({ itemCount: indexedKeys.length, chunkCount: 0, vectorSearch: false })),
+    stats: vi.fn(async () => ({
+      itemCount: indexedKeys.length,
+      chunkCount: 0,
+      vectorSearch: false,
+    })),
   };
 }
 
@@ -104,23 +126,27 @@ function fakeHighlightWriter(
       pages: [{ pageIndex: 0, pageLabel: "1", text: pageText }],
       existing: [],
     })),
-    createHighlights: vi.fn(async (_ref: ItemRef, planned: PlannedHighlight[]) => ({
-      created: planned.map((p) => ({ ...p, kind: "highlight" as const })),
-      failed: [],
-    })),
+    createHighlights: vi.fn(
+      async (_ref: ItemRef, planned: PlannedHighlight[]) => ({
+        created: planned.map((p) => ({ ...p, kind: "highlight" as const })),
+        failed: [],
+      }),
+    ),
   };
 }
 
-function setup(overrides: {
-  provider?: AIProvider;
-  ensureProvider?: () => Promise<AIProvider>;
-  reader?: ItemContextReader;
-  contexts?: ItemContext[];
-  prefs?: Record<string, unknown>;
-  retrieval?: OrchestratorRetrievalDeps;
-  tagWriter?: TagWriter;
-  highlightWriter?: HighlightWriter;
-} = {}) {
+function setup(
+  overrides: {
+    provider?: AIProvider;
+    ensureProvider?: () => Promise<AIProvider>;
+    reader?: ItemContextReader;
+    contexts?: ItemContext[];
+    prefs?: Record<string, unknown>;
+    retrieval?: OrchestratorRetrievalDeps;
+    tagWriter?: TagWriter;
+    highlightWriter?: HighlightWriter;
+  } = {},
+) {
   const provider = overrides.provider ?? fakeProvider();
   const reader = overrides.reader ?? fakeReader(overrides.contexts ?? twoItems);
   const noteWriter = fakeNoteWriter();
@@ -130,7 +156,9 @@ function setup(overrides: {
     reader,
     noteWriter,
     tagWriter,
-    ...(overrides.highlightWriter ? { highlightWriter: overrides.highlightWriter } : {}),
+    ...(overrides.highlightWriter
+      ? { highlightWriter: overrides.highlightWriter }
+      : {}),
     prefs: fakePrefs(overrides.prefs),
     logger: noopLogger,
     ...(overrides.retrieval ? { retrieval: overrides.retrieval } : {}),
@@ -154,7 +182,11 @@ describe("listTemplateWorkflows", () => {
 describe("template workflow run", () => {
   it("emits started → progress → item-completed per item → completed", async () => {
     const { orchestrator, events, provider } = setup();
-    await orchestrator.run({ kind: "template", templateId: "results", items: refs });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: refs,
+    });
 
     expect(eventTypes(events)).toEqual([
       "started",
@@ -166,26 +198,42 @@ describe("template workflow run", () => {
       "completed",
     ]);
     expect(provider.complete).toHaveBeenCalledTimes(2);
-    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    const completed = events.at(-1) as Extract<
+      WorkflowEvent,
+      { type: "completed" }
+    >;
     expect(completed.result.sections).toHaveLength(2);
     expect(completed.result.content).toContain("## Paper A");
     expect(completed.result.content).toContain("## Paper B");
     expect(orchestrator.lastResult()).toBe(completed.result);
   });
 
-  it("sends the composed per-item context to the provider", async () => {
-    const prompts: string[] = [];
+  it("sends system + user messages with the template's per-item context", async () => {
+    const systemPrompts: string[] = [];
+    const userPrompts: string[] = [];
     const provider = fakeProvider(async (request) => {
-      prompts.push(request.messages[0]!.content);
+      systemPrompts.push(
+        request.messages.find((m) => m.role === "system")!.content,
+      );
+      userPrompts.push(
+        request.messages.find((m) => m.role === "user")!.content,
+      );
       return { text: "ok" };
     });
     const { orchestrator } = setup({ provider });
-    await orchestrator.run({ kind: "template", templateId: "results", items: refs });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: refs,
+    });
 
-    expect(prompts[0]).toContain("Summarize the key results");
-    expect(prompts[0]).toContain("=== Item: Paper A (AAA) ===");
-    expect(prompts[0]).not.toContain("Paper B");
-    expect(prompts[1]).toContain("=== Item: Paper B (BBB) ===");
+    // System prompt contains the role description.
+    expect(systemPrompts[0]).toContain("research results summarizer");
+    // User prompt contains the task + paper context.
+    expect(userPrompts[0]).toContain("Summarize the key results");
+    expect(userPrompts[0]).toContain("=== Item: Paper A (AAA) ===");
+    expect(userPrompts[0]).not.toContain("Paper B");
+    expect(userPrompts[1]).toContain("=== Item: Paper B (BBB) ===");
   });
 
   it("fails with a mapped message when the provider gate rejects, without reading items", async () => {
@@ -196,7 +244,11 @@ describe("template workflow run", () => {
         throw new AuthenticationError("nope");
       },
     });
-    await orchestrator.run({ kind: "template", templateId: "results", items: refs });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: refs,
+    });
 
     expect(eventTypes(events)).toEqual(["started", "failed"]);
     const failed = events.at(-1) as Extract<WorkflowEvent, { type: "failed" }>;
@@ -214,7 +266,11 @@ describe("template workflow run", () => {
       return { text: "first ok" };
     });
     const { orchestrator, events, noteWriter } = setup({ provider });
-    await orchestrator.run({ kind: "template", templateId: "results", items: refs });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: refs,
+    });
 
     expect(eventTypes(events)).toEqual([
       "started",
@@ -238,7 +294,11 @@ describe("template workflow run", () => {
         unsubscribe();
       }
     });
-    await orchestrator.run({ kind: "template", templateId: "results", items: refs });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: refs,
+    });
 
     expect(provider.complete).toHaveBeenCalledTimes(1);
     expect(eventTypes(events).at(-1)).toBe("cancelled");
@@ -254,10 +314,18 @@ describe("template workflow run", () => {
     );
     const { orchestrator } = setup({ provider, contexts: [twoItems[0]!] });
     const oneRef = [refs[0]!];
-    const first = orchestrator.run({ kind: "template", templateId: "results", items: oneRef });
+    const first = orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: oneRef,
+    });
 
     await expect(
-      orchestrator.run({ kind: "template", templateId: "results", items: oneRef }),
+      orchestrator.run({
+        kind: "template",
+        templateId: "results",
+        items: oneRef,
+      }),
     ).rejects.toThrow("already running");
     expect(orchestrator.isRunning()).toBe(true);
 
@@ -269,14 +337,22 @@ describe("template workflow run", () => {
 
   it("fails cleanly on an unknown template id", async () => {
     const { orchestrator, events, provider } = setup();
-    await orchestrator.run({ kind: "template", templateId: "no-such", items: refs });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "no-such",
+      items: refs,
+    });
     expect(eventTypes(events)).toEqual(["failed"]);
     expect(provider.complete).not.toHaveBeenCalled();
   });
 
   it("fails cleanly on an empty selection", async () => {
     const { orchestrator, events } = setup();
-    await orchestrator.run({ kind: "template", templateId: "results", items: [] });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: [],
+    });
     expect(eventTypes(events)).toEqual(["failed"]);
   });
 
@@ -293,7 +369,10 @@ describe("template workflow run", () => {
       templateId: "results",
       items: [{ libraryID: 1, key: "AAA" }],
     });
-    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    const completed = events.at(-1) as Extract<
+      WorkflowEvent,
+      { type: "completed" }
+    >;
     expect(completed.result.truncationNotice).toContain("AAA");
     expect(completed.result.sections[0]?.truncated).toBe(true);
   });
@@ -312,15 +391,22 @@ describe("retrieval-augmented context (S3-05)", () => {
     const backend = fakeBackend(
       async () => [
         {
-          chunk: { itemKey: "AAA", source: "pdf-text", text: "the important finding", chunkId: "AAA:pdf-text:0" },
+          chunk: {
+            itemKey: "AAA",
+            source: "pdf-text",
+            text: "the important finding",
+            chunkId: "AAA:pdf-text:0",
+          },
           score: 1,
         },
       ],
       ["AAA"],
     );
-    const prompts: string[] = [];
+    const userPrompts: string[] = [];
     const provider = fakeProvider(async (request) => {
-      prompts.push(request.messages[0]!.content);
+      userPrompts.push(
+        request.messages.find((m) => m.role === "user")!.content,
+      );
       return { text: "ok" };
     });
     const { orchestrator, events } = setup({
@@ -328,13 +414,20 @@ describe("retrieval-augmented context (S3-05)", () => {
       contexts: [bigItem("AAA")],
       retrieval: { backend },
     });
-    await orchestrator.run({ kind: "template", templateId: "results", items: [{ libraryID: 1, key: "AAA" }] });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: [{ libraryID: 1, key: "AAA" }],
+    });
 
     expect(backend.query).toHaveBeenCalledWith(
       expect.objectContaining({ itemKeys: ["AAA"], mode: "hybrid" }),
     );
-    expect(prompts[0]).toContain("the important finding");
-    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(userPrompts[0]).toContain("the important finding");
+    const completed = events.at(-1) as Extract<
+      WorkflowEvent,
+      { type: "completed" }
+    >;
     expect(completed.result.truncationNotice).toBeUndefined();
     expect(completed.result.sections[0]?.truncated).toBe(false);
   });
@@ -346,47 +439,84 @@ describe("retrieval-augmented context (S3-05)", () => {
       contexts: [bigItem("AAA")],
       retrieval: { backend, enqueueReindex },
     });
-    await orchestrator.run({ kind: "template", templateId: "results", items: [{ libraryID: 1, key: "AAA" }] });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: [{ libraryID: 1, key: "AAA" }],
+    });
 
     expect(enqueueReindex).toHaveBeenCalledWith([{ libraryID: 1, key: "AAA" }]);
-    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    const completed = events.at(-1) as Extract<
+      WorkflowEvent,
+      { type: "completed" }
+    >;
     expect(completed.result.truncationNotice).toContain("AAA");
   });
 
   it("does not query the backend at all when no item is over budget", async () => {
     const backend = fakeBackend();
     const { orchestrator } = setup({ retrieval: { backend } });
-    await orchestrator.run({ kind: "template", templateId: "results", items: refs });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: refs,
+    });
     expect(backend.query).not.toHaveBeenCalled();
   });
 
   it("keeps Sprint 2 behavior unchanged when no retrieval dep is configured", async () => {
     const { orchestrator, events } = setup({ contexts: [bigItem("AAA")] });
-    await orchestrator.run({ kind: "template", templateId: "results", items: [{ libraryID: 1, key: "AAA" }] });
-    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: [{ libraryID: 1, key: "AAA" }],
+    });
+    const completed = events.at(-1) as Extract<
+      WorkflowEvent,
+      { type: "completed" }
+    >;
     expect(completed.result.truncationNotice).toContain("AAA");
   });
 });
 
 describe("free-prompt workflow run", () => {
-  it("makes a single provider call over the combined context", async () => {
-    const prompts: string[] = [];
+  it("makes a single provider call with system + user messages", async () => {
+    const systemPrompts: string[] = [];
+    const userPrompts: string[] = [];
     const provider = fakeProvider(async (request) => {
-      prompts.push(request.messages[0]!.content);
+      systemPrompts.push(
+        request.messages.find((m) => m.role === "system")!.content,
+      );
+      userPrompts.push(
+        request.messages.find((m) => m.role === "user")!.content,
+      );
       return { text: "combined answer" };
     });
     const { orchestrator, events } = setup({ provider });
-    await orchestrator.run({ kind: "free-prompt", prompt: "Compare the methods", items: refs });
+    await orchestrator.run({
+      kind: "free-prompt",
+      prompt: "Compare the methods",
+      items: refs,
+    });
 
     expect(provider.complete).toHaveBeenCalledTimes(1);
-    expect(prompts[0]).toContain("Compare the methods");
-    expect(prompts[0]).toContain("=== Item: Paper A (AAA) ===");
-    expect(prompts[0]).toContain("=== Item: Paper B (BBB) ===");
-    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(systemPrompts[0]).toContain("research assistant");
+    expect(userPrompts[0]).toContain("Compare the methods");
+    expect(userPrompts[0]).toContain("=== Item: Paper A (AAA) ===");
+    expect(userPrompts[0]).toContain("=== Item: Paper B (BBB) ===");
+    // The preamble is now in the system prompt.
+    expect(userPrompts[0]).not.toContain("Answer based on");
+    const completed = events.at(-1) as Extract<
+      WorkflowEvent,
+      { type: "completed" }
+    >;
     expect(completed.result.workflowId).toBe("free-prompt");
     expect(completed.result.content).toBe("combined answer");
     // Save targets: one section per analyzed item (FR-055).
-    expect(completed.result.sections.map((s) => s.ref.key)).toEqual(["AAA", "BBB"]);
+    expect(completed.result.sections.map((s) => s.ref.key)).toEqual([
+      "AAA",
+      "BBB",
+    ]);
   });
 
   it("rejects an empty prompt without calling the provider", async () => {
@@ -402,9 +532,15 @@ describe("saveResultAsNotes", () => {
     orchestrator: WorkflowOrchestrator;
     noteWriter: ReturnType<typeof fakeNoteWriter>;
   }> {
-    const provider = fakeProvider(async () => ({ text: "# Heading\n\n- point" }));
+    const provider = fakeProvider(async () => ({
+      text: "# Heading\n\n- point",
+    }));
     const { orchestrator, noteWriter } = setup({ provider });
-    await orchestrator.run({ kind: "template", templateId: "results", items: refs });
+    await orchestrator.run({
+      kind: "template",
+      templateId: "results",
+      items: refs,
+    });
     return { orchestrator, noteWriter };
   }
 
@@ -442,10 +578,16 @@ describe("saveResultAsNotes", () => {
 });
 
 describe("analyze-papers workflow (S4-01/S4-02)", () => {
-  it("produces one structured section per item using the configured categories", async () => {
-    const prompts: string[] = [];
+  it("produces one structured section per item with system+user messages", async () => {
+    const systemPrompts: string[] = [];
+    const userPrompts: string[] = [];
     const provider = fakeProvider(async (request) => {
-      prompts.push(request.messages[0]!.content);
+      systemPrompts.push(
+        request.messages.find((m) => m.role === "system")!.content,
+      );
+      userPrompts.push(
+        request.messages.find((m) => m.role === "user")!.content,
+      );
       return { text: "## methodology\n\nDetails." };
     });
     const { orchestrator, events } = setup({ provider });
@@ -460,12 +602,17 @@ describe("analyze-papers workflow (S4-01/S4-02)", () => {
       "item-completed",
       "completed",
     ]);
-    // FR-039 (all 7 defaults listed) + FR-040 (no-evidence instruction, FR-038 not hardcoded).
-    expect(prompts[0]).toContain("- methodology");
-    expect(prompts[0]).toContain("- open points");
-    expect(prompts[0]).toContain("No relevant evidence found");
-    expect(prompts[0]).toContain("=== Item: Paper A (AAA) ===");
-    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    // System prompt contains the category headings and no-evidence marker.
+    expect(systemPrompts[0]).toContain('"## methodology"');
+    expect(systemPrompts[0]).toContain('"## open points"');
+    expect(systemPrompts[0]).toContain("No relevant evidence found");
+    // User prompt is concise.
+    expect(userPrompts[0]).toContain("Analyze this paper");
+    expect(userPrompts[0]).toContain("=== Item: Paper A (AAA) ===");
+    const completed = events.at(-1) as Extract<
+      WorkflowEvent,
+      { type: "completed" }
+    >;
     expect(completed.result.workflowId).toBe("analyze-papers");
     expect(completed.result.sections).toHaveLength(2);
     expect(completed.result.content).toContain("## Paper A");
@@ -473,10 +620,16 @@ describe("analyze-papers workflow (S4-01/S4-02)", () => {
 });
 
 describe("generate-notes workflow (S4-03)", () => {
-  it("calls the model with the annotation-grouping prompt when annotations exist", async () => {
-    const prompts: string[] = [];
+  it("calls the model with system + user messages when annotations exist", async () => {
+    const systemPrompts: string[] = [];
+    const userPrompts: string[] = [];
     const provider = fakeProvider(async (request) => {
-      prompts.push(request.messages[0]!.content);
+      systemPrompts.push(
+        request.messages.find((m) => m.role === "system")!.content,
+      );
+      userPrompts.push(
+        request.messages.find((m) => m.role === "user")!.content,
+      );
       return { text: "## Methodology\n\n- a point" };
     });
     const annotated = itemContext({
@@ -485,10 +638,17 @@ describe("generate-notes workflow (S4-03)", () => {
       annotations: [annotation({ text: "key claim" })],
     });
     const { orchestrator, events } = setup({ provider, contexts: [annotated] });
-    await orchestrator.run({ kind: "generate-notes", items: [{ libraryID: 1, key: "AAA" }] });
+    await orchestrator.run({
+      kind: "generate-notes",
+      items: [{ libraryID: 1, key: "AAA" }],
+    });
 
-    expect(prompts[0]).toContain("annotations and highlights");
-    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(systemPrompts[0]).toContain("note organizer");
+    expect(userPrompts[0]).toContain("annotations and highlights");
+    const completed = events.at(-1) as Extract<
+      WorkflowEvent,
+      { type: "completed" }
+    >;
     expect(completed.result.sections[0]?.markdown).toContain("a point");
   });
 
@@ -499,10 +659,16 @@ describe("generate-notes workflow (S4-03)", () => {
       annotations: [],
     });
     const { orchestrator, events, provider } = setup({ contexts: [bare] });
-    await orchestrator.run({ kind: "generate-notes", items: [{ libraryID: 1, key: "AAA" }] });
+    await orchestrator.run({
+      kind: "generate-notes",
+      items: [{ libraryID: 1, key: "AAA" }],
+    });
 
     expect(provider.complete).not.toHaveBeenCalled();
-    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    const completed = events.at(-1) as Extract<
+      WorkflowEvent,
+      { type: "completed" }
+    >;
     expect(completed.result.sections[0]?.markdown).toContain("no annotations");
   });
 });
@@ -516,11 +682,19 @@ describe("summarize-notes workflow (S4-04)", () => {
       annotations: [],
     });
     const { orchestrator, events, provider } = setup({ contexts: [bare] });
-    await orchestrator.run({ kind: "summarize-notes", items: [{ libraryID: 1, key: "AAA" }] });
+    await orchestrator.run({
+      kind: "summarize-notes",
+      items: [{ libraryID: 1, key: "AAA" }],
+    });
 
     expect(provider.complete).not.toHaveBeenCalled();
-    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
-    expect(completed.result.sections[0]?.markdown).toContain("no notes or annotations");
+    const completed = events.at(-1) as Extract<
+      WorkflowEvent,
+      { type: "completed" }
+    >;
+    expect(completed.result.sections[0]?.markdown).toContain(
+      "no notes or annotations",
+    );
   });
 });
 
@@ -533,20 +707,30 @@ describe("suggest-tags workflow (S4-05)", () => {
     });
 
   it("parses the reply, writes tags to the item, and reports what was added", async () => {
-    const provider = fakeProvider(async () => ({ text: "machine learning, rag" }));
+    const provider = fakeProvider(async () => ({
+      text: "machine learning, rag",
+    }));
     const { orchestrator, events, tagWriter } = setup({
       provider,
       contexts: [annotated("AAA", "Paper A")],
       tagWriter: fakeTagWriter(),
     });
-    await orchestrator.run({ kind: "suggest-tags", items: [{ libraryID: 1, key: "AAA" }] });
+    await orchestrator.run({
+      kind: "suggest-tags",
+      items: [{ libraryID: 1, key: "AAA" }],
+    });
 
     expect(tagWriter.addTags).toHaveBeenCalledWith(
       { libraryID: 1, key: "AAA" },
       ["machine learning", "rag"],
     );
-    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
-    expect(completed.result.sections[0]?.markdown).toBe("Added 2 tags: machine learning, rag");
+    const completed = events.at(-1) as Extract<
+      WorkflowEvent,
+      { type: "completed" }
+    >;
+    expect(completed.result.sections[0]?.markdown).toBe(
+      "Added 2 tags: machine learning, rag",
+    );
   });
 
   it("reports when no new tags were added", async () => {
@@ -555,9 +739,17 @@ describe("suggest-tags workflow (S4-05)", () => {
       provider,
       contexts: [annotated("AAA", "Paper A")],
     });
-    await orchestrator.run({ kind: "suggest-tags", items: [{ libraryID: 1, key: "AAA" }] });
-    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
-    expect(completed.result.sections[0]?.markdown).toBe("No new tags were added.");
+    await orchestrator.run({
+      kind: "suggest-tags",
+      items: [{ libraryID: 1, key: "AAA" }],
+    });
+    const completed = events.at(-1) as Extract<
+      WorkflowEvent,
+      { type: "completed" }
+    >;
+    expect(completed.result.sections[0]?.markdown).toBe(
+      "No new tags were added.",
+    );
   });
 
   it("fails cleanly when no tag writer is configured", async () => {
@@ -570,7 +762,10 @@ describe("suggest-tags workflow (S4-05)", () => {
     });
     const events: WorkflowEvent[] = [];
     orchestrator.subscribe((e) => events.push(e));
-    await orchestrator.run({ kind: "suggest-tags", items: [{ libraryID: 1, key: "AAA" }] });
+    await orchestrator.run({
+      kind: "suggest-tags",
+      items: [{ libraryID: 1, key: "AAA" }],
+    });
     expect(eventTypes(events)).toEqual(["failed"]);
   });
 });
@@ -584,8 +779,14 @@ describe("write-safety on partial failure (S4-06)", () => {
       return { text: "alpha, beta" };
     });
     const contexts = [
-      itemContext({ ref: { libraryID: 1, key: "AAA" }, metadata: metadata({ key: "AAA", title: "Paper A" }) }),
-      itemContext({ ref: { libraryID: 1, key: "BBB" }, metadata: metadata({ key: "BBB", title: "Paper B" }) }),
+      itemContext({
+        ref: { libraryID: 1, key: "AAA" },
+        metadata: metadata({ key: "AAA", title: "Paper A" }),
+      }),
+      itemContext({
+        ref: { libraryID: 1, key: "BBB" },
+        metadata: metadata({ key: "BBB", title: "Paper B" }),
+      }),
     ];
     const tagWriter = fakeTagWriter();
     const { orchestrator, events } = setup({ provider, contexts, tagWriter });
@@ -593,7 +794,10 @@ describe("write-safety on partial failure (S4-06)", () => {
 
     // Item 1 written; item 2 (the failing one) never reached the writer (NFR-023).
     expect(tagWriter.addTags).toHaveBeenCalledTimes(1);
-    expect(tagWriter.addTags).toHaveBeenCalledWith({ libraryID: 1, key: "AAA" }, ["alpha", "beta"]);
+    expect(tagWriter.addTags).toHaveBeenCalledWith(
+      { libraryID: 1, key: "AAA" },
+      ["alpha", "beta"],
+    );
     expect(eventTypes(events).at(-1)).toBe("failed");
     expect(orchestrator.lastResult()?.sections).toHaveLength(1);
     expect(orchestrator.lastResult()?.sections[0]?.ref.key).toBe("AAA");
@@ -605,7 +809,9 @@ describe("auto-highlight workflow (S5-02)", () => {
     { category: "results", quote: "42% improvement over the baseline" },
     { category: "limitations", quote: "small sample" },
   ]);
-  const oneCategoryPrefs = (contextWindowTokens?: number): Record<string, unknown> => ({
+  const oneCategoryPrefs = (
+    contextWindowTokens?: number,
+  ): Record<string, unknown> => ({
     [PREF_KEYS.colorSemantics]: JSON.stringify({ "#5fb236": ["results"] }),
     // Pin the per-request window above the context ceiling so these tests
     // exercise the context-window math, not the quote-accuracy window cap.
@@ -619,15 +825,20 @@ describe("auto-highlight workflow (S5-02)", () => {
     const highlightWriter = fakeHighlightWriter();
     const { orchestrator, events } = setup({
       provider: fakeProvider(async (request) => {
-        const prompt = request.messages[0]!.content;
-        if (prompt.includes("- results\n")) {
+        const systemContent = request.messages.find(
+          (m) => m.role === "system",
+        )!.content;
+        if (systemContent.includes("- results\n")) {
           return {
             text: JSON.stringify([
-              { category: "wrong model label", quote: "42% improvement over the baseline" },
+              {
+                category: "wrong model label",
+                quote: "42% improvement over the baseline",
+              },
             ]),
           };
         }
-        if (prompt.includes("- limitations\n")) {
+        if (systemContent.includes("- limitations\n")) {
           return {
             text: JSON.stringify([
               { category: "limitations", quote: "small sample" },
@@ -643,7 +854,8 @@ describe("auto-highlight workflow (S5-02)", () => {
 
     expect(eventTypes(events).at(-1)).toBe("completed");
     expect(highlightWriter.createHighlights).toHaveBeenCalledTimes(1);
-    const planned = highlightWriter.createHighlights.mock.calls[0]![1] as PlannedHighlight[];
+    const planned = highlightWriter.createHighlights.mock
+      .calls[0]![1] as PlannedHighlight[];
     expect(planned.map((p) => p.category)).toEqual(["results", "limitations"]);
     const section = orchestrator.lastResult()!.sections[0]!;
     expect(section.markdown).toContain("Created 2 highlights");
@@ -675,7 +887,11 @@ describe("auto-highlight workflow (S5-02)", () => {
     await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
 
     expect(provider.complete).toHaveBeenCalledTimes(7);
-    const prompts = vi.mocked(provider.complete).mock.calls.map((call) => call[0].messages[0]!.content);
+    const systemPrompts = vi
+      .mocked(provider.complete)
+      .mock.calls.map(
+        (call) => call[0].messages.find((m) => m.role === "system")!.content,
+      );
     for (const category of [
       "methodology",
       "results",
@@ -685,7 +901,10 @@ describe("auto-highlight workflow (S5-02)", () => {
       "data",
       "open points",
     ]) {
-      expect(prompts.filter((prompt) => prompt.includes(`- ${category}\n`))).toHaveLength(1);
+      // Each category gets its own pass with the system prompt listing that single category.
+      expect(
+        systemPrompts.filter((sp) => sp.includes(`- ${category}\n`)),
+      ).toHaveLength(1);
     }
   });
 
@@ -698,12 +917,20 @@ describe("auto-highlight workflow (S5-02)", () => {
   });
 
   it("chunks complete PDF text without retrieval or a false indexing/truncation notice", async () => {
-    const backend = fakeBackend(async () => [
-      {
-        chunk: { itemKey: "AAA", source: "pdf-text", text: "an unrelated snippet", chunkId: "AAA:pdf-text:0" },
-        score: 1,
-      },
-    ], ["AAA"]);
+    const backend = fakeBackend(
+      async () => [
+        {
+          chunk: {
+            itemKey: "AAA",
+            source: "pdf-text",
+            text: "an unrelated snippet",
+            chunkId: "AAA:pdf-text:0",
+          },
+          score: 1,
+        },
+      ],
+      ["AAA"],
+    );
     const bigItem = itemContext({
       ref: { libraryID: 1, key: "AAA" },
       metadata: metadata({ key: "AAA" }),
@@ -711,9 +938,11 @@ describe("auto-highlight workflow (S5-02)", () => {
       pdfTextSource: "pdf-worker",
     });
     const highlightWriter = fakeHighlightWriter(bigItem.pdfText);
-    const prompts: string[] = [];
+    const userPrompts: string[] = [];
     const provider = fakeProvider(async (request) => {
-      prompts.push(request.messages[0]!.content);
+      userPrompts.push(
+        request.messages.find((m) => m.role === "user")!.content,
+      );
       return { text: reply };
     });
     const { orchestrator, events } = setup({
@@ -725,12 +954,20 @@ describe("auto-highlight workflow (S5-02)", () => {
       // no ranking role either.
       prefs: { [PREF_KEYS.autoHighlightWindowTokens]: 65_536 },
     });
-    await orchestrator.run({ kind: "auto-highlight", items: [{ libraryID: 1, key: "AAA" }] });
+    await orchestrator.run({
+      kind: "auto-highlight",
+      items: [{ libraryID: 1, key: "AAA" }],
+    });
 
     expect(backend.query).not.toHaveBeenCalled();
-    expect(prompts[0]).not.toContain("an unrelated snippet");
-    expect(prompts.some((prompt) => prompt.includes("the smoking gun sentence"))).toBe(true);
-    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(userPrompts[0]).not.toContain("an unrelated snippet");
+    expect(
+      userPrompts.some((prompt) => prompt.includes("the smoking gun sentence")),
+    ).toBe(true);
+    const completed = events.at(-1) as Extract<
+      WorkflowEvent,
+      { type: "completed" }
+    >;
     expect(completed.result.truncationNotice).toBeUndefined();
     expect(completed.result.sections[0]?.truncated).toBe(false);
   });
@@ -748,7 +985,12 @@ describe("auto-highlight workflow (S5-02)", () => {
 
     expect(provider.complete).toHaveBeenCalledTimes(7);
     const request = vi.mocked(provider.complete).mock.calls[0]![0];
-    expect(request.messages[0]?.content).toContain(pageText);
+    expect(request.messages.find((m) => m.role === "user")?.content).toContain(
+      pageText,
+    );
+    expect(
+      request.messages.find((m) => m.role === "system")?.content,
+    ).toBeTruthy();
     expect(request.maxTokens).toBe(HIGHLIGHT_COMPLETION_TOKENS);
   });
 
@@ -762,7 +1004,10 @@ describe("auto-highlight workflow (S5-02)", () => {
       prefs: oneCategoryPrefs(),
       highlightWriter: fakeHighlightWriter(pageText),
     });
-    await limitedRun.orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+    await limitedRun.orchestrator.run({
+      kind: "auto-highlight",
+      items: [refs[0]!],
+    });
     expect(vi.mocked(limited.complete).mock.calls.length).toBeGreaterThan(1);
 
     const unknown = fakeProvider(async () => ({ text: "[]" }));
@@ -772,13 +1017,18 @@ describe("auto-highlight workflow (S5-02)", () => {
       prefs: oneCategoryPrefs(),
       highlightWriter: fakeHighlightWriter(pageText),
     });
-    await unknownRun.orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
+    await unknownRun.orchestrator.run({
+      kind: "auto-highlight",
+      items: [refs[0]!],
+    });
     expect(unknown.complete).toHaveBeenCalledTimes(7);
   });
 
   it("uses a user cap below the provider-reported context window", async () => {
     const provider = fakeProvider(async () => ({ text: "[]" }));
-    provider.getModelCapabilities = async () => ({ contextWindowTokens: 65_536 });
+    provider.getModelCapabilities = async () => ({
+      contextWindowTokens: 65_536,
+    });
     const { orchestrator } = setup({
       provider,
       contexts: [twoItems[0]!],
@@ -791,20 +1041,25 @@ describe("auto-highlight workflow (S5-02)", () => {
 
   it("uses category retrieval to prioritize an oversized PDF without losing coverage", async () => {
     const pageText = `DOCUMENT-START ${"alpha ".repeat(1_000)} PRIORITY-PASSAGE ${"omega ".repeat(1_000)} DOCUMENT-END`;
-    const backend = fakeBackend(async () => [
-      {
-        chunk: {
-          itemKey: "AAA",
-          source: "pdf-text",
-          text: "PRIORITY-PASSAGE",
-          chunkId: "AAA:pdf-text:priority",
+    const backend = fakeBackend(
+      async () => [
+        {
+          chunk: {
+            itemKey: "AAA",
+            source: "pdf-text",
+            text: "PRIORITY-PASSAGE",
+            chunkId: "AAA:pdf-text:priority",
+          },
+          score: 10,
         },
-        score: 10,
-      },
-    ], ["AAA"]);
-    const prompts: string[] = [];
+      ],
+      ["AAA"],
+    );
+    const userPrompts: string[] = [];
     const provider = fakeProvider(async (request) => {
-      prompts.push(request.messages[0]!.content);
+      userPrompts.push(
+        request.messages.find((m) => m.role === "user")!.content,
+      );
       return { text: "[]" };
     });
     const { orchestrator } = setup({
@@ -816,20 +1071,28 @@ describe("auto-highlight workflow (S5-02)", () => {
     });
     await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
 
-    expect(backend.query).toHaveBeenCalledWith(expect.objectContaining({ text: "results" }));
-    expect(prompts.length).toBeGreaterThan(1);
-    expect(prompts[0]).toContain("PRIORITY-PASSAGE");
-    expect(prompts.some((prompt) => prompt.includes("DOCUMENT-START"))).toBe(true);
-    expect(prompts.some((prompt) => prompt.includes("DOCUMENT-END"))).toBe(true);
+    expect(backend.query).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "results" }),
+    );
+    expect(userPrompts.length).toBeGreaterThan(1);
+    expect(userPrompts[0]).toContain("PRIORITY-PASSAGE");
+    expect(
+      userPrompts.some((prompt) => prompt.includes("DOCUMENT-START")),
+    ).toBe(true);
+    expect(userPrompts.some((prompt) => prompt.includes("DOCUMENT-END"))).toBe(
+      true,
+    );
   });
 
   it("falls back to exhaustive document order when retrieval fails", async () => {
     const backend = fakeBackend(async () => {
       throw new Error("index unavailable");
     }, ["AAA"]);
-    const prompts: string[] = [];
+    const userPrompts: string[] = [];
     const provider = fakeProvider(async (request) => {
-      prompts.push(request.messages[0]!.content);
+      userPrompts.push(
+        request.messages.find((m) => m.role === "user")!.content,
+      );
       return { text: "[]" };
     });
     const { orchestrator, events } = setup({
@@ -837,12 +1100,19 @@ describe("auto-highlight workflow (S5-02)", () => {
       contexts: [twoItems[0]!],
       prefs: oneCategoryPrefs(8_192),
       retrieval: { backend },
-      highlightWriter: fakeHighlightWriter(`DOCUMENT-START ${"body ".repeat(2_000)} DOCUMENT-END`),
+      highlightWriter: fakeHighlightWriter(
+        `DOCUMENT-START ${"body ".repeat(2_000)} DOCUMENT-END`,
+      ),
     });
     await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
-    expect(prompts[0]).toContain("DOCUMENT-START");
-    expect(prompts.some((prompt) => prompt.includes("DOCUMENT-END"))).toBe(true);
-    const completed = events.at(-1) as Extract<WorkflowEvent, { type: "completed" }>;
+    expect(userPrompts[0]).toContain("DOCUMENT-START");
+    expect(userPrompts.some((prompt) => prompt.includes("DOCUMENT-END"))).toBe(
+      true,
+    );
+    const completed = events.at(-1) as Extract<
+      WorkflowEvent,
+      { type: "completed" }
+    >;
     expect(completed.result.truncationNotice).toBeUndefined();
   });
 
@@ -870,7 +1140,10 @@ describe("auto-highlight workflow (S5-02)", () => {
     let truncatedOnce = false;
     const provider = fakeProvider(async (request) => {
       // oneCategoryPrefs maps a color only for "results"; cut off that pass.
-      if (!truncatedOnce && request.messages[0]!.content.includes("- results\n")) {
+      const systemContent = request.messages.find(
+        (m) => m.role === "system",
+      )!.content;
+      if (!truncatedOnce && systemContent.includes("- results\n")) {
         truncatedOnce = true;
         return {
           text: '[{ "category": "results", "quote": "42% improvement over the baseline" }',
@@ -894,8 +1167,11 @@ describe("auto-highlight workflow (S5-02)", () => {
     expect(provider.complete).toHaveBeenCalledTimes(9);
     expect(eventTypes(events).at(-1)).toBe("completed");
     // The head that was returned before the cut is not lost.
-    const planned = highlightWriter.createHighlights.mock.calls[0]![1] as PlannedHighlight[];
-    expect(planned.map((p) => p.text)).toContain("42% improvement over the baseline");
+    const planned = highlightWriter.createHighlights.mock
+      .calls[0]![1] as PlannedHighlight[];
+    expect(planned.map((p) => p.text)).toContain(
+      "42% improvement over the baseline",
+    );
   });
 
   it("does not split non-context provider failures", async () => {
@@ -925,6 +1201,8 @@ describe("auto-highlight workflow (S5-02)", () => {
     });
     await orchestrator.run({ kind: "auto-highlight", items: [refs[0]!] });
     expect(highlightWriter.createHighlights).not.toHaveBeenCalled();
-    expect(orchestrator.lastResult()!.sections[0]!.markdown).toContain("no readable PDF text");
+    expect(orchestrator.lastResult()!.sections[0]!.markdown).toContain(
+      "no readable PDF text",
+    );
   });
 });

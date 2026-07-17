@@ -57,9 +57,15 @@ export function buildChatCompletionRequest(
   };
   if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens;
   if (request.temperature !== undefined) body.temperature = request.temperature;
+  if (request.responseFormat !== undefined)
+    body.response_format = request.responseFormat;
   return {
     url: `${base}/chat/completions`,
-    init: { method: "POST", headers: headers(settings), body: JSON.stringify(body) },
+    init: {
+      method: "POST",
+      headers: headers(settings),
+      body: JSON.stringify(body),
+    },
   };
 }
 
@@ -71,7 +77,9 @@ export function parseChatCompletionResponse(body: unknown): CompletionResult {
   };
   const content = data?.choices?.[0]?.message?.content;
   if (typeof content !== "string") {
-    throw new ProviderResponseError("The AI service returned an unexpected response.");
+    throw new ProviderResponseError(
+      "The AI service returned an unexpected response.",
+    );
   }
   const result: CompletionResult = { text: content };
   if (data.choices?.[0]?.finish_reason === "length") result.truncated = true;
@@ -79,7 +87,9 @@ export function parseChatCompletionResponse(body: unknown): CompletionResult {
   const usage = data.usage;
   if (usage) {
     result.usage = {
-      ...(typeof usage.prompt_tokens === "number" ? { promptTokens: usage.prompt_tokens } : {}),
+      ...(typeof usage.prompt_tokens === "number"
+        ? { promptTokens: usage.prompt_tokens }
+        : {}),
       ...(typeof usage.completion_tokens === "number"
         ? { completionTokens: usage.completion_tokens }
         : {}),
@@ -91,7 +101,9 @@ export function parseChatCompletionResponse(body: unknown): CompletionResult {
 export function parseModelsResponse(body: unknown): string[] {
   const data = body as { data?: { id?: unknown }[] };
   if (!Array.isArray(data?.data)) {
-    throw new ProviderResponseError("The AI service returned an unexpected response.");
+    throw new ProviderResponseError(
+      "The AI service returned an unexpected response.",
+    );
   }
   return data.data
     .map((entry) => entry?.id)
@@ -144,10 +156,18 @@ export function classifyHttpError(
   }
   const contextLimitPattern =
     /context[_ -]?(?:length|window)|maximum context|max_model_len|too many tokens|token limit|request too large/i;
-  if ((status === 400 || status === 413 || status === 422) && contextLimitPattern.test(detail)) {
-    return new ContextLimitError("The request exceeded the model's context window.");
+  if (
+    (status === 400 || status === 413 || status === 422) &&
+    contextLimitPattern.test(detail)
+  ) {
+    return new ContextLimitError(
+      "The request exceeded the model's context window.",
+    );
   }
-  if ((status === 404 || status === 400) && detail.toLowerCase().includes("model")) {
+  if (
+    (status === 404 || status === 400) &&
+    detail.toLowerCase().includes("model")
+  ) {
     return new ModelNotFoundError(
       `The model '${settings.model}' was not found on this endpoint.`,
     );
@@ -163,7 +183,9 @@ export function classifyHttpError(
   );
 }
 
-function validateSettings(settings: ProviderSettings): InvalidConfigError | null {
+function validateSettings(
+  settings: ProviderSettings,
+): InvalidConfigError | null {
   if (!settings.endpoint.trim() || !settings.model.trim()) {
     return new InvalidConfigError(
       "The provider is not fully configured. Enter an endpoint URL and model in the settings.",
@@ -218,7 +240,8 @@ export class OpenAICompatibleProvider implements AIProvider {
       if (
         error instanceof AgentError &&
         (error.code === "provider-response" ||
-          (error.code === "provider-unavailable" && this.isEndpointOnlyMiss(error)))
+          (error.code === "provider-unavailable" &&
+            this.isEndpointOnlyMiss(error)))
       ) {
         return this.validateViaCompletion();
       }
@@ -237,20 +260,30 @@ export class OpenAICompatibleProvider implements AIProvider {
         messages: [{ role: "user", content: "ping" }],
         maxTokens: 1,
       });
-      return { ok: true, message: `Connected. Model '${this.settings.model}' responded.` };
+      return {
+        ok: true,
+        message: `Connected. Model '${this.settings.model}' responded.`,
+      };
     } catch (error) {
       return { ok: false, error: this.asAgentError(error) };
     }
   }
 
-  async complete(request: CompletionRequest, onChunk?: ChunkHandler): Promise<CompletionResult> {
+  async complete(
+    request: CompletionRequest,
+    onChunk?: ChunkHandler,
+  ): Promise<CompletionResult> {
     const configError = validateSettings(this.settings);
     if (configError) throw configError;
 
     const { url, init } = buildChatCompletionRequest(this.settings, request);
     const response = await this.send(url, init, request.signal);
     if (!response.ok) {
-      throw classifyHttpError(response.status, await this.safeText(response), this.settings);
+      throw classifyHttpError(
+        response.status,
+        await this.safeText(response),
+        this.settings,
+      );
     }
     const result = parseChatCompletionResponse(await this.safeJson(response));
     // Streaming-ready: emit the buffered result as a single chunk (S1-01).
@@ -263,7 +296,10 @@ export class OpenAICompatibleProvider implements AIProvider {
   }
 
   async getModelCapabilities(): Promise<ModelCapabilities | undefined> {
-    return parseModelCapabilitiesResponse(await this.fetchModelsResponse(), this.settings.model);
+    return parseModelCapabilitiesResponse(
+      await this.fetchModelsResponse(),
+      this.settings.model,
+    );
   }
 
   private async fetchModelsResponse(): Promise<unknown> {
@@ -274,15 +310,25 @@ export class OpenAICompatibleProvider implements AIProvider {
       headers: headers(this.settings),
     });
     if (!response.ok) {
-      throw classifyHttpError(response.status, await this.safeText(response), this.settings);
+      throw classifyHttpError(
+        response.status,
+        await this.safeText(response),
+        this.settings,
+      );
     }
     this.modelsResponse = await this.safeJson(response);
     return this.modelsResponse;
   }
 
   /** fetch with timeout; network failures and aborts become typed errors. */
-  private async send(url: string, init: RequestInit, callerSignal?: AbortSignal): Promise<Response> {
-    const controller = (this.deps.createAbortController ?? (() => new AbortController()))();
+  private async send(
+    url: string,
+    init: RequestInit,
+    callerSignal?: AbortSignal,
+  ): Promise<Response> {
+    const controller = (
+      this.deps.createAbortController ?? (() => new AbortController())
+    )();
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -321,9 +367,12 @@ export class OpenAICompatibleProvider implements AIProvider {
     try {
       return await response.json();
     } catch (error) {
-      throw new ProviderResponseError("The AI service returned an unexpected response.", {
-        cause: error,
-      });
+      throw new ProviderResponseError(
+        "The AI service returned an unexpected response.",
+        {
+          cause: error,
+        },
+      );
     }
   }
 
